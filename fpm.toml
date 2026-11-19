@@ -42,3 +42,13 @@ main = "elisha_test_kinds.F90"
 name = "elisha_test_fftw"
 source-dir = "src/tests"
 main = "elisha_test_fftw.F90"
+
+[[test]]
+name = "elisha_test_spectral"
+source-dir = "src/tests"
+main = "elisha_test_spectral.F90"
+
+[[test]]
+name = "elisha_test_extension"
+source-dir = "src/tests"
+main = "elisha_test_extension.F90"
