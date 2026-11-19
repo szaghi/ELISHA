@@ -1851,8 +1851,17 @@ contains
    integer(I4P), allocatable :: sc(:), sd(:), rc(:), rd(:) !< Counts and displacements (values).
    complex(R_P), allocatable :: sb(:), rb(:)               !< Buffers.
    integer(I4P)              :: nr, me, r, c, x, y, z, nzl, nyl, z0, y0 !< Counters, sizes, first plane and row.
+   type(elisha_comm_object)  :: comm                       !< Copy of self%comm (below).
 
-   nr = self%comm%nranks ; me = self%comm%rank
+   ! a field-wise copy of self%comm (not `comm = self%comm`, not a helper): passing any part of self to a procedure
+   ! (self%comm%alltoallv_c) makes nvfortran 26.9 -fast leave this routine's copy loops unvectorised and unrolled less
+   ! (-Minfo: 5 loops optimised against ADAM's 10, which passed MPI_COMM_WORLD), and the forward transpose of the
+   ! 128^3 isolated solve took 34 ms against ADAM's 21 ms on one rank. gfortran's transpose times equal ADAM's with
+   ! the copy; in solve_slabs, whose internal procedures would host-associate it, the same copy slowed gfortran's
+   ! redistribution by 40%, and nvfortran's is not slower there without it: solve_slabs keeps self%comm.
+   comm%comm = self%comm%comm ; comm%rank = self%comm%rank ; comm%nranks = self%comm%nranks
+   comm%is_initialized = self%comm%is_initialized
+   nr = comm%nranks ; me = comm%rank
    nzl = self%zr(me+1) - self%zr(me) ; nyl = self%yr(me+1) - self%yr(me)
    z0 = self%zr(me) ; y0 = self%yr(me)
    allocate(sc(0:nr-1), sd(0:nr-1), rc(0:nr-1), rd(0:nr-1))
@@ -1894,7 +1903,7 @@ contains
    enddo
    stat = ELISHA_OK
    if (nr > 1) then
-      call self%comm%alltoallv_c(sb, sc, sd, rb, rc, rd, stat)
+      call comm%alltoallv_c(sb, sc, sd, rb, rc, rd, stat)
       if (collective_failed(stat, errmsg, 'elisha_spectral_solver_object%slab_transpose')) return
    endif
    ! this rank's own block

@@ -37,6 +37,7 @@ modes = static-gnu shared-gnu
         tests-gnu tests-gnu-debug tests-gnu-coverage tests-gnu-serial
         tests-nvf tests-nvf-debug tests-nvf-oac tests-nvf-serial
         tests-intel tests-intel-debug
+        bench-gnu bench-nvf
 
 [common-variables]
 $EXDIRS = PENF/src/tests/ PENF/src/third_party/ PENF/scripts/ PENF/docs/
@@ -147,6 +148,16 @@ template  = template-tests template-intel-release template-intel template-mpi
 help      = Tests, ifx + MPI, all checks on
 template  = template-tests template-intel template-mpi template-debug
 
+# ── benchmark modes: src/bench/elisha_bench_spectral_mpi.F90 into exe-bench/ (not a test: scripts/run_tests.sh runs
+# exe/ only, fpm does not build src/bench); the ADAM oracle it times against lives in src/tests/ ──
+[bench-gnu]
+help      = Benchmark of the spectral solver against ADAM's, gfortran + MPI, optimised
+template  = template-bench template-gnu template-mpi template-release
+
+[bench-nvf]
+help      = Benchmark of the spectral solver against ADAM's, nvfortran + MPI (HPC-X), optimised, CPU
+template  = template-bench template-nvf template-mpi template-release
+
 # ── templates: left wins when a mode lists several, so the role template (lib, tests) comes first ──
 [template-base]
 preproc         = -D_FFTW
@@ -199,6 +210,13 @@ src       = src/lib/ src/tests/
 build_dir = exe/
 ext_libs  = fftw3
 
+[template-bench]
+src       = src/lib/ src/tests/ src/bench/
+build_dir = exe-bench/
+target    = src/bench/elisha_bench_spectral_mpi.F90
+output    = elisha_bench_spectral_mpi
+ext_libs  = fftw3
+
 # MPI: the compiler's wrapper (mpif90 of the Open MPI / HPC-X first on PATH); serial: the single-rank stub of the
 # communication layer (ELISHA_NO_MPI), no MPI library at all
 [template-mpi]
@@ -225,4 +243,4 @@ rule_1 = cd docs && npm install --no-audit --no-fund && npm run docs:build
 
 [rule-clean]
 help = Remove build products and documentation artefacts
-rule = rm -rf exe/ lib/ obj/ mod/ docs/api/ docs/.vitepress/dist/ docs/.vitepress/cache/ docs/public/coverage.json
+rule = rm -rf exe/ exe-bench/ lib/ obj/ mod/ docs/api/ docs/.vitepress/dist/ docs/.vitepress/cache/ docs/public/coverage.json
