@@ -40,6 +40,7 @@ export default withMermaid({
           items: [
             { text: 'L0: the math', link: '/guide/l0-math' },
             { text: 'Errors, communicator and mesh', link: '/guide/errors-comm-mesh' },
+            { text: 'The spectral solver', link: '/guide/spectral-solver' },
           ],
         },
         {
