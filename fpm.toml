@@ -10,6 +10,9 @@ description = "Elliptic Laplacian Inversion: Spectral and Hierarchical Algorithm
 [dependencies]
 PENF = { git="https://github.com/szaghi/PENF.git", branch="master" }
 
+[dev-dependencies]
+GIDEON = { git="https://github.com/szaghi/GIDEON.git", branch="main" }
+
 [library]
 source-dir = "src/lib"
 
@@ -62,3 +65,8 @@ main = "elisha_test_adam_parity_l0.F90"
 name = "elisha_test_lattice_green"
 source-dir = "src/tests"
 main = "elisha_test_lattice_green.F90"
+
+[[test]]
+name = "elisha_test_gideon_d1"
+source-dir = "src/tests"
+main = "elisha_test_gideon_d1.F90"

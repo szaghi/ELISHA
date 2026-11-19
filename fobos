@@ -25,6 +25,8 @@ check = fobis fetch
 [dependencies]
 deps_dir = src/third_party
 PENF     = https://github.com/szaghi/PENF :: branch=master
+# test-only: the D1 rows cross-checked against GIDEON's (src/tests/elisha_test_gideon_d1); the library never uses it
+GIDEON   = https://github.com/szaghi/GIDEON :: branch=main
 
 [modes]
 # the first mode is the default (fobis build, scripts/install.sh): the MPI library any gfortran + Open MPI builds
@@ -38,6 +40,8 @@ modes = static-gnu shared-gnu
 
 [common-variables]
 $EXDIRS = PENF/src/tests/ PENF/src/third_party/ PENF/scripts/ PENF/docs/
+          GIDEON/src/tests/ GIDEON/src/bench/ GIDEON/src/examples/ GIDEON/src/third_party/ GIDEON/scripts/ GIDEON/docs/
+          GIDEON/notes/
 $STD_GNU = -std=f2018
 $STD_INT = -standard-semantics -std18
 # NVIDIA compute capability of the OpenACC modes; override with --varset (e.g. --varset cc90)
