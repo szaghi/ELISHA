@@ -11,6 +11,7 @@ use elisha_kind_parameters
 use elisha_parameters
 use elisha_spectral
 use elisha_extension
+use elisha_lattice_green_library
 implicit none
 private
 public :: I4P, I8P, R8P, R_P
@@ -21,4 +22,6 @@ public :: ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_BC_KINDS
 public :: ELISHA_D1_COEF, elisha_axis_eigenvalue, elisha_axis_transform_size, elisha_dg_stencil, elisha_smooth_size
 ! L0 extension maps (elisha_extension)
 public :: elisha_axis_map, elisha_set_plane
+! lattice Green's function of the 7-point Laplacian (elisha_lattice_green_library, generated)
+public :: elisha_lattice_green
 endmodule elisha

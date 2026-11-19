@@ -57,3 +57,8 @@ main = "elisha_test_extension.F90"
 name = "elisha_test_adam_parity_l0"
 source-dir = "src/tests"
 main = "elisha_test_adam_parity_l0.F90"
+
+[[test]]
+name = "elisha_test_lattice_green"
+source-dir = "src/tests"
+main = "elisha_test_lattice_green.F90"
