@@ -12,6 +12,7 @@ use elisha_status
 use elisha_comm
 use elisha_keys
 use elisha_mesh
+use elisha_setup_checks
 use elisha_parameters
 use elisha_spectral
 use elisha_extension
@@ -39,7 +40,11 @@ public :: elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_table
 public :: elisha_mesh_object
 ! boundary kinds (elisha_parameters)
 public :: ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST
-public :: ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_BC_KINDS
+public :: ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_BC_KINDS, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
+! the setup checks (elisha_setup_checks)
+public :: elisha_check_bc, elisha_check_dg_order, elisha_check_ghost_count, elisha_check_isolated
+public :: elisha_check_isolated_mesh, elisha_check_path, elisha_check_periodicity, elisha_check_reach
+public :: elisha_check_unbounded
 ! L0 spectral math (elisha_spectral)
 public :: ELISHA_D1_COEF, elisha_axis_eigenvalue, elisha_axis_transform_size, elisha_dg_stencil, elisha_smooth_size
 ! L0 extension maps (elisha_extension)

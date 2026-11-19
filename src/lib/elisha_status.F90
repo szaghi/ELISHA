@@ -91,7 +91,7 @@ integer(I4P), parameter :: ELISHA_ERR_ENERGY_REDUNDANT = 35_I4P  !< No energy wi
 integer(I4P), parameter :: ELISHA_STATUS_LAST = 35_I4P          !< The largest code.
 
 contains
-   subroutine elisha_set_error(stat, errmsg, code, msg)
+   pure subroutine elisha_set_error(stat, errmsg, code, msg)
    !< Set the status to `code` and, when the caller asked for it, the message: `<name>: <msg>`.
    integer(I4P),                       intent(out)           :: stat   !< Status.
    character(:), allocatable,          intent(out), optional :: errmsg !< Message.
