@@ -70,3 +70,8 @@ main = "elisha_test_lattice_green.F90"
 name = "elisha_test_gideon_d1"
 source-dir = "src/tests"
 main = "elisha_test_gideon_d1.F90"
+
+[[test]]
+name = "elisha_test_status"
+source-dir = "src/tests"
+main = "elisha_test_status.F90"
