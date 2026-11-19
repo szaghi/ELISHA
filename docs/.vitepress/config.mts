@@ -36,6 +36,12 @@ export default withMermaid({
           ],
         },
         {
+          text: 'Layers',
+          items: [
+            { text: 'L0: the math', link: '/guide/l0-math' },
+          ],
+        },
+        {
           text: 'Project',
           items: [
             { text: 'Contributing', link: '/guide/contributing' },
