@@ -17,6 +17,7 @@ use elisha_parameters
 use elisha_spectral
 use elisha_extension
 use elisha_lattice_green_library
+use elisha_spectral_solver
 implicit none
 private
 public :: I4P, I8P, R8P, R_P
@@ -51,4 +52,6 @@ public :: ELISHA_D1_COEF, elisha_axis_eigenvalue, elisha_axis_transform_size, el
 public :: elisha_axis_map, elisha_set_plane
 ! lattice Green's function of the 7-point Laplacian (elisha_lattice_green_library, generated)
 public :: elisha_lattice_green
+! the spectral (FFT) solver (elisha_spectral_solver)
+public :: elisha_spectral_solver_object
 endmodule elisha
