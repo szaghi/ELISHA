@@ -21,6 +21,9 @@ link = ["fftw3"]
 auto-executables = false
 auto-tests = false
 auto-examples = false
+# the verbatim ADAM FFT solver (a test oracle in src/tests, MPI-only) uses `mpi` unconditionally: fpm scans every source
+# of src/tests, so it must know the module is external (no fpm test compiles that file: the oracle skips without MPI)
+external-modules = ["mpi"]
 
 
 [fortran]
@@ -95,3 +98,8 @@ main = "elisha_test_mesh_mpi.F90"
 name = "elisha_test_setup_checks_mpi"
 source-dir = "src/tests"
 main = "elisha_test_setup_checks_mpi.F90"
+
+[[test]]
+name = "elisha_test_adam_fft_oracle_mpi"
+source-dir = "src/tests"
+main = "elisha_test_adam_fft_oracle_mpi.F90"
