@@ -39,6 +39,7 @@ export default withMermaid({
           text: 'Layers',
           items: [
             { text: 'L0: the math', link: '/guide/l0-math' },
+            { text: 'Errors, communicator and mesh', link: '/guide/errors-comm-mesh' },
           ],
         },
         {
