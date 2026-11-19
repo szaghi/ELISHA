@@ -1,0 +1,140 @@
+!< ELISHA, L1 cell keys: a block or cell (i, j, k, level) packed in one int64, and an open-addressing table on them.
+module elisha_keys
+!< ELISHA, L1 cell keys: a block or cell (i, j, k, level) packed in one int64, and an open-addressing table on them.
+!<
+!< Ported from ADAM's `adam_poisson_mg_object` (ADAM 669d0bdd), the same arithmetic (`elisha_test_keys` holds it to
+!< ADAM's bitwise):
+!< - `elisha_bkey([i, j, k, l])`: 19 + 19 + 19 bits for the coordinates (0 <= i, j, k < 2^19: `ELISHA_KEY_COORD_LIMIT`)
+!<   and the level above them, `l * 2^57 + i * 2^38 + j * 2^19 + k`. ADAM's comment says 7 bits for the level, but the
+!<   seventh is the sign: a level field of 64 or more overflows int64 (negative keys, and -1 is the table's empty
+!<   mark), so the field is 0..63 and a cell level at most `ELISHA_KEY_LEVEL_MAX` = 63 - 16 = 47. Unreachable in
+!<   practice: below 2^19 cells per axis the leaf level is at most 18 (the mesh's key-limit check);
+!< - `elisha_ckey(lv, cc)`: a cell key, the level offset by `ELISHA_KEY_LEVEL_OFFSET` (16) since the multigrid's levels
+!<   inside the blocks go below zero; `elisha_kdecode` inverts it;
+!< - `elisha_hash_table`: int64 key (>= 0) -> int32 value (> 0; 0 means absent), linear probing, capacity the first
+!<   prime above 2 n for n expected keys. `put` needs a free slot: at most n distinct keys after `init(n)`.
+use penf, only : I4P, I8P
+implicit none
+private
+public :: ELISHA_KEY_COORD_LIMIT, ELISHA_KEY_LEVEL_OFFSET, ELISHA_KEY_LEVEL_MAX
+public :: elisha_bkey, elisha_ckey, elisha_kdecode
+public :: elisha_hash_table
+
+integer(I4P), parameter :: ELISHA_KEY_COORD_LIMIT=2_I4P**19 !< Coordinates are below it (19 bits).
+integer(I4P), parameter :: ELISHA_KEY_LEVEL_OFFSET=16_I4P  !< Level offset in the cell keys (levels below lmin).
+integer(I4P), parameter :: ELISHA_KEY_LEVEL_MAX=63_I4P - ELISHA_KEY_LEVEL_OFFSET !< Highest cell level (int64 sign).
+
+type :: elisha_hash_table
+   !< Open-addressing hash, int64 key (>= 0) -> int32 value (0: absent).
+   integer(I8P), allocatable :: keys(:) !< Keys (-1: empty).
+   integer(I4P), allocatable :: vals(:) !< Values.
+   integer(I4P)              :: cap=0   !< Capacity (a prime).
+   contains
+      procedure, pass(h) :: init !< A table for about n keys.
+      procedure, pass(h) :: free !< Free the table.
+      procedure, pass(h) :: put  !< Insert or overwrite.
+      procedure, pass(h) :: get  !< The value of a key, 0 when absent.
+endtype elisha_hash_table
+
+contains
+   pure function elisha_bkey(c4) result(key)
+   !< Key of a block or cell: (i, j, k, level) packed in 19 + 19 + 19 + 7 bits.
+   integer(I4P), intent(in) :: c4(4) !< Coordinates (i, j, k, level).
+   integer(I8P)             :: key   !< Key.
+
+   key = int(c4(4), I8P) * 2_I8P**57 + int(c4(1), I8P) * 2_I8P**38 + int(c4(2), I8P) * 2_I8P**19 + int(c4(3), I8P)
+   endfunction elisha_bkey
+
+   pure function elisha_ckey(lv, cc) result(key)
+   !< Key of a cell at level lv.
+   integer(I4P), intent(in) :: lv    !< Level.
+   integer(I4P), intent(in) :: cc(3) !< Cell coordinates.
+   integer(I8P)             :: key   !< Key.
+
+   key = elisha_bkey([cc, lv + ELISHA_KEY_LEVEL_OFFSET]) ! the levels inside the blocks may be negative (#84 E5c)
+   endfunction elisha_ckey
+
+   pure subroutine elisha_kdecode(key, lv, cc)
+   !< Decode a cell key.
+   integer(I8P), intent(in)  :: key   !< Key.
+   integer(I4P), intent(out) :: lv    !< Level.
+   integer(I4P), intent(out) :: cc(3) !< Cell coordinates.
+
+   lv = int(key / 2_I8P**57, I4P) - ELISHA_KEY_LEVEL_OFFSET
+   cc(1) = int(mod(key / 2_I8P**38, 2_I8P**19), I4P)
+   cc(2) = int(mod(key / 2_I8P**19, 2_I8P**19), I4P)
+   cc(3) = int(mod(key, 2_I8P**19), I4P)
+   endsubroutine elisha_kdecode
+
+
+   subroutine init(h, n)
+   !< A table for about n keys (capacity: the first prime above 2 n).
+   class(elisha_hash_table), intent(inout) :: h        !< Table.
+   integer(I4P),     intent(in)    :: n        !< Expected keys.
+   integer(I4P)                    :: c, f     !< Capacity candidate, factor.
+   logical                         :: is_prime !< Primality.
+
+   c = max(2 * n + 1, 7)
+   do
+      is_prime = .true.
+      do f=2, int(sqrt(real(c))) + 1
+         if (f < c .and. mod(c, f) == 0) then
+            is_prime = .false.
+            exit
+         endif
+      enddo
+      if (is_prime) exit
+      c = c + 1
+   enddo
+   call h%free
+   h%cap = c
+   allocate(h%keys(0:c-1), h%vals(0:c-1))
+   h%keys = -1_I8P
+   h%vals = 0
+   endsubroutine init
+
+   subroutine free(h)
+   !< Free a table.
+   class(elisha_hash_table), intent(inout) :: h !< Table.
+
+   if (allocated(h%keys)) deallocate(h%keys, h%vals)
+   h%cap = 0
+   endsubroutine free
+
+   subroutine put(h, key, val)
+   !< Insert or overwrite (linear probing).
+   class(elisha_hash_table), intent(inout) :: h   !< Table.
+   integer(I8P),     intent(in)    :: key !< Key (>= 0).
+   integer(I4P),     intent(in)    :: val !< Value (> 0).
+   integer(I4P)                    :: s   !< Slot.
+
+   s = int(modulo(key, int(h%cap, I8P)), I4P)
+   do
+      if (h%keys(s) == -1_I8P .or. h%keys(s) == key) exit
+      s = mod(s + 1, h%cap)
+   enddo
+   h%keys(s) = key
+   h%vals(s) = val
+   endsubroutine put
+
+   pure function get(h, key) result(val)
+   !< The value of a key, 0 when absent.
+   class(elisha_hash_table), intent(in) :: h    !< Table.
+   integer(I8P),     intent(in) :: key  !< Key.
+   integer(I4P)                 :: val  !< Value.
+   integer(I4P)                 :: s, n !< Slot, probes.
+
+   val = 0
+   if (h%cap == 0) return
+   s = int(modulo(key, int(h%cap, I8P)), I4P)
+   do n=1, h%cap
+      if (h%keys(s) == -1_I8P) return
+      if (h%keys(s) == key) then
+         val = h%vals(s)
+         return
+      endif
+      s = mod(s + 1, h%cap)
+   enddo
+   endfunction get
+
+endmodule elisha_keys
