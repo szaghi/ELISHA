@@ -85,3 +85,8 @@ main = "elisha_test_comm_mpi.F90"
 name = "elisha_test_keys"
 source-dir = "src/tests"
 main = "elisha_test_keys.F90"
+
+[[test]]
+name = "elisha_test_mesh_mpi"
+source-dir = "src/tests"
+main = "elisha_test_mesh_mpi.F90"
