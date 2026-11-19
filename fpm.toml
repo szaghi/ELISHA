@@ -75,3 +75,8 @@ main = "elisha_test_gideon_d1.F90"
 name = "elisha_test_status"
 source-dir = "src/tests"
 main = "elisha_test_status.F90"
+
+[[test]]
+name = "elisha_test_comm_mpi"
+source-dir = "src/tests"
+main = "elisha_test_comm_mpi.F90"

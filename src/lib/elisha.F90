@@ -9,6 +9,7 @@ module elisha
 use penf, only : I4P, I8P, R8P
 use elisha_kind_parameters
 use elisha_status
+use elisha_comm
 use elisha_parameters
 use elisha_spectral
 use elisha_extension
@@ -27,6 +28,8 @@ public :: ELISHA_ERR_ISOLATED_BC, ELISHA_ERR_ISOLATED_WIDE, ELISHA_ERR_ISOLATED_
 public :: ELISHA_ERR_ISOLATED_CELLS, ELISHA_ERR_ISOLATED_BOUNDARY_LEAF
 public :: ELISHA_ERR_DG_ORDER, ELISHA_ERR_DG_REACH, ELISHA_ERR_DG_AMR, ELISHA_ERR_REDUNDANT, ELISHA_ERR_GHOST_VALUES
 public :: ELISHA_ERR_GHOST_COUNT, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE, ELISHA_ERR_ENERGY_REDUNDANT
+! the communication context (elisha_comm)
+public :: elisha_comm_object
 ! boundary kinds (elisha_parameters)
 public :: ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST
 public :: ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_BC_KINDS
