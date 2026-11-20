@@ -2,8 +2,9 @@
 module elisha_keys
 !< ELISHA, L1 cell keys: a block or cell (i, j, k, level) packed in one int64, and an open-addressing table on them.
 !<
-!< Ported from ADAM's `adam_poisson_mg_object` (ADAM 669d0bdd), the same arithmetic (`elisha_test_keys` holds it to
-!< ADAM's bitwise):
+!< Ported from ADAM's `adam_poisson_mg_object` (ADAM 669d0bdd): the keys with the same arithmetic (`elisha_test_keys`
+!< holds them to ADAM's bitwise), the table with ADAM's capacity, empty mark and probing but its own slot function
+!< (below):
 !< - `elisha_bkey([i, j, k, l])`: 19 + 19 + 19 bits for the coordinates (0 <= i, j, k < 2^19: `ELISHA_KEY_COORD_LIMIT`)
 !<   and the level above them, `l * 2^57 + i * 2^38 + j * 2^19 + k`. ADAM's comment says 7 bits for the level, but the
 !<   seventh is the sign: a level field of 64 or more overflows int64 (negative keys, and -1 is the table's empty
@@ -12,12 +13,31 @@ module elisha_keys
 !< - `elisha_ckey(lv, cc)`: a cell key, the level offset by `ELISHA_KEY_LEVEL_OFFSET` (16) since the multigrid's levels
 !<   inside the blocks go below zero; `elisha_kdecode` inverts it;
 !< - `elisha_hash_table`: int64 key (>= 0) -> int32 value (> 0; 0 means absent), linear probing, capacity the first
-!<   prime above 2 n for n expected keys. `put` needs a free slot: at most n distinct keys after `init(n)`.
+!<   prime above 2 n for n expected keys, -1 the empty mark (ADAM's). `put` needs a free slot: at most n distinct keys
+!<   after `init(n)`.
+!<
+!< **The slot function is not ADAM's** (ELISHA M4). ADAM's first slot was `modulo(key, cap)`. A cell key is linear in
+!< its coordinates, `l 2^57 + i 2^38 + j 2^19 + k`, so its slot is `(A + i (2^38 mod cap) + j (2^19 mod cap) + k) mod
+!< cap`; when the capacity is a prime just above 2^19 (n of about 2^18 keys: 524 309 for n = 262 144), 2^19 mod cap is
+!< -21, consecutive j land 21 slots apart and the runs of consecutive k merge into one cluster that linear probing walks
+!< end to end. Measured: the 131 072 halo keys of the level-4 restriction of a 491 520-cell AMR mesh at np 2 (a 64 x 64
+!< x 32 slab of cells) cost 50 967 probes per insert, 44.8 of the setup's 48.5 s (ADAM and ELISHA alike; 100-110 s at
+!< np 4, 3 s at np 1, where that operator has no halo). The slot is now `elisha_hash_slot(key, cap)`: the key's 63 bits
+!< mixed by a xorshift (`x ^= x << 13; x ^= x >> 7; x ^= x << 17`, each step kept to 63 bits, so every value is
+!< non-negative and only `ieor`, `ishft` and `iand` touch it: no integer multiply, so no signed overflow on any
+!< compiler), then `modulo(x, cap)`. The xorshift is a bijection of the 63-bit words, linear over GF(2) and not over the
+!< integers, so it breaks the arithmetic lattice of the keys: the same slab costs 0.17 probes per insert, a full 64^3
+!< box 0.51, random keys 0.51 (as a splitmix64 finaliser, measured alike, without its 64-bit multiplies).
+!< No result depends on the slot positions: the table only maps a key to the value stored with it, `get` returns the
+!< same value for every key whatever the slots, and the solvers number their entries (leaf, node and halo ids) in
+!< first-seen order, not by slot. `elisha_test_keys` holds the key -> value map to ADAM's table on the same inserts and
+!< guards the clustering; the hierarchical parity test holds every solver result bitwise to ADAM's (which keeps ADAM's
+!< table).
 use penf, only : I4P, I8P
 implicit none
 private
 public :: ELISHA_KEY_COORD_LIMIT, ELISHA_KEY_LEVEL_OFFSET, ELISHA_KEY_LEVEL_MAX
-public :: elisha_bkey, elisha_ckey, elisha_kdecode
+public :: elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_slot
 public :: elisha_hash_table
 
 integer(I4P), parameter :: ELISHA_KEY_COORD_LIMIT=2_I4P**19 !< Coordinates are below it (19 bits).
@@ -67,6 +87,21 @@ contains
    endsubroutine elisha_kdecode
 
 
+   pure function elisha_hash_slot(key, cap) result(s)
+   !< The first slot of a key in a table of `cap` slots: the key's 63 bits mixed by a xorshift, each step kept to 63
+   !< bits (non-negative throughout: only bit operations, no overflow), then modulo the capacity (see the module).
+   integer(I8P), intent(in) :: key !< Key (>= 0).
+   integer(I4P), intent(in) :: cap !< Capacity (> 0).
+   integer(I4P)             :: s   !< Slot, 0..cap-1.
+   integer(I8P)             :: x   !< Mixed key.
+
+   x = iand(key, huge(1_I8P))
+   x = iand(ieor(x, ishft(x, 13)), huge(1_I8P))
+   x = ieor(x, ishft(x, -7))
+   x = iand(ieor(x, ishft(x, 17)), huge(1_I8P))
+   s = int(modulo(x, int(cap, I8P)), I4P)
+   endfunction elisha_hash_slot
+
    subroutine init(h, n)
    !< A table for about n keys (capacity: the first prime above 2 n).
    class(elisha_hash_table), intent(inout) :: h        !< Table.
@@ -108,7 +143,7 @@ contains
    integer(I4P),     intent(in)    :: val !< Value (> 0).
    integer(I4P)                    :: s   !< Slot.
 
-   s = int(modulo(key, int(h%cap, I8P)), I4P)
+   s = elisha_hash_slot(key, h%cap)
    do
       if (h%keys(s) == -1_I8P .or. h%keys(s) == key) exit
       s = mod(s + 1, h%cap)
@@ -126,7 +161,7 @@ contains
 
    val = 0
    if (h%cap == 0) return
-   s = int(modulo(key, int(h%cap, I8P)), I4P)
+   s = elisha_hash_slot(key, h%cap)
    do n=1, h%cap
       if (h%keys(s) == -1_I8P) return
       if (h%keys(s) == key) then

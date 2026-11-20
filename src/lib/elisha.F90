@@ -37,7 +37,7 @@ public :: ELISHA_ERR_GHOST_COUNT, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE, 
 public :: elisha_comm_object
 ! cell keys and the hash table (elisha_keys)
 public :: ELISHA_KEY_COORD_LIMIT, ELISHA_KEY_LEVEL_OFFSET, ELISHA_KEY_LEVEL_MAX
-public :: elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_table
+public :: elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_slot, elisha_hash_table
 ! the mesh descriptor (elisha_mesh)
 public :: elisha_mesh_object
 ! boundary kinds (elisha_parameters)

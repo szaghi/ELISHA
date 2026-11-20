@@ -6,10 +6,15 @@ program elisha_test_keys
 !<   -16..47 (cell keys, `ELISHA_KEY_LEVEL_MAX`) and 0..63 (block keys), every key non-negative (the int64 sign bit
 !<   bounds the level field to 0..63, not the 7 bits ADAM's comment states); `elisha_kdecode` inverts `elisha_ckey`; distinct cells give
 !<   distinct keys (a full sweep of a small box over several levels);
-!< - table: 20000 pseudo-random keys and a run of keys congruent modulo the capacity (worst-case probing) put and got
-!<   back; absent keys give 0; an overwrite replaces; the capacity is the first prime above 2 n, as ADAM's.
+!< - table: 20000 pseudo-random keys and a run of keys congruent modulo the capacity (one probe chain under ADAM's slot
+!<   function) put and got back; absent keys give 0; an overwrite replaces; the capacity is the first prime above 2 n,
+!<   as ADAM's; on the same inserts ELISHA's table and ADAM's hold the same keys with the same values, both ways (the
+!<   slot positions differ: ELISHA mixes the key, `elisha_hash_slot`);
+!< - clustering: the cell keys of a 64 x 64 x 32 slab at one level (the halo pattern that cost ADAM's slot function
+!<   50 967 probes per insert in a table for 262 144 keys) inserted into such a table cost at most 4 probes per insert
+!<   on average (counted by replaying the slot sequence with `elisha_hash_slot`).
 use elisha_keys, only : ELISHA_KEY_COORD_LIMIT, ELISHA_KEY_LEVEL_OFFSET, ELISHA_KEY_LEVEL_MAX, elisha_bkey, &
-                        elisha_ckey, elisha_kdecode, elisha_hash_table
+                        elisha_ckey, elisha_kdecode, elisha_hash_slot, elisha_hash_table
 use adam_flail_keys_reference, only : KEY_LEVEL_OFFSET, hash_table, bkey, ckey, kdecode, hash_init, hash_put, hash_get
 use penf, only : I4P, I8P
 implicit none
@@ -19,7 +24,7 @@ type(hash_table)        :: ha                     !< ADAM's table.
 integer(I4P)            :: failures               !< Failed checks.
 integer(I4P)            :: lv, i, j, k, l2, c2(3), n, v !< Counters, decoded values.
 integer(I4P)            :: cs(6)                  !< Coordinate samples.
-integer(I8P)            :: key, seed              !< Key, generator state.
+integer(I8P)            :: key, seed, probes      !< Key, generator state, probes.
 integer(I8P), allocatable :: keys(:), seen(:)     !< Keys.
 
 failures = 0
@@ -68,7 +73,16 @@ do i=1, NK
    if (v /= i) call fail('a key lost')
    if (v /= hash_get(ha, keys(i))) call fail('get not ADAM''s')
 enddo
-if (any(h%keys /= ha%keys) .or. any(h%vals /= ha%vals)) call fail('table layout not ADAM''s')
+! the same key -> value map as ADAM's table, both ways (the slots differ)
+if (count(h%keys /= -1_I8P) /= count(ha%keys /= -1_I8P)) call fail('a different number of keys than ADAM''s')
+do i=0, ha%cap-1
+   if (ha%keys(i) == -1_I8P) cycle
+   if (h%get(ha%keys(i)) /= ha%vals(i)) call fail('a key of ADAM''s table maps elsewhere')
+enddo
+do i=0, h%cap-1
+   if (h%keys(i) == -1_I8P) cycle
+   if (hash_get(ha, h%keys(i)) /= h%vals(i)) call fail('a key not in ADAM''s table')
+enddo
 n = 0
 do i=1, 1000
    if (any(keys == int(i, I8P))) cycle
@@ -84,6 +98,20 @@ do i=1, 50
    if (h%get(int(i, I8P) * h%cap) /= i) call fail('collision chain')
 enddo
 if (h%get(51_I8P * h%cap) /= 0) call fail('absent key on a full chain')
+! clustering: the halo pattern of ADAM's slow setup, 64 x 64 x 32 cells at level 4, in a table for 262 144 keys
+call h%init(262144_I4P)
+probes = 0_I8P ; n = 0
+do i=32, 95 ; do j=32, 95 ; do k=32, 63
+   key = elisha_ckey(4_I4P, [i, j, k])
+   v = elisha_hash_slot(key, h%cap)
+   do while (h%keys(v) /= -1_I8P)
+      probes = probes + 1_I8P ; v = mod(v + 1, h%cap)
+   enddo
+   n = n + 1
+   call h%put(key, n)
+enddo ; enddo ; enddo
+if (real(probes) / n > 4.) call fail('the slot function clusters the halo pattern')
+print '(A,I0,A,F6.3)', 'elisha_test_keys: halo pattern, ', n, ' keys, probes per insert ', real(probes) / n
 call h%free ; if (h%cap /= 0 .or. allocated(h%keys)) call fail('free')
 if (failures > 0) error stop 1
 print '(A)', 'elisha_test_keys: ok'
