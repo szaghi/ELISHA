@@ -23,7 +23,10 @@ module elisha_hierarchical_solver_oac
 !< - ELISHA's host changes stay host-side and change no device arithmetic: the host's persistent halo buffers
 !<   (`xsend`, `xhalo`, audit C1) are allocated and unused here (the device ones, `dsb`, `dhb`, were ADAM's already);
 !<   the red-black colour assertion is the host assembly's, which this backend inherits (the parallel colour sweep
-!<   relies on it).
+!<   relies on it);
+!< - one M7 change (audit C3): the colour is the host's integer (`ivec`, 0 or 1), placed by `place_i` and compared as
+!<   such in `sweep_dev`; ADAM's was a real compared through `nint`. It selects rows only, so no result changes, and
+!<   the kernel reads 4 bytes per row for it instead of 8.
 !< The `R8P` of ADAM is ELISHA's `R_P` (R8P).
 !<
 !< ADAM's description, unchanged: the leaves, the hierarchy and every operator are assembled on the host; `work_place`
@@ -272,7 +275,7 @@ contains
    do lv=self%lbot+1, self%lmax
       call place_csr(self%al(lv), attach) ; call place_csr(self%el(lv), attach)
       call place_csr(self%rl(lv), attach) ; call place_csr(self%pl(lv), attach)
-      call place_r(self%diag(lv)%v, attach) ; call place_r(self%colour(lv)%v, attach)
+      call place_r(self%diag(lv)%v, attach) ; call place_i(self%colour(lv)%v, attach)
    enddo
    do lv=self%lbot, self%lmax
       call place_r(self%lr(lv)%v, attach) ; call place_r(self%le(lv)%v, attach)
@@ -405,7 +408,7 @@ contains
    integer(I4P), intent(in)    :: col(nnz)                        !< Column slots (present).
    real(R_P),    intent(in)    :: val(nnz)                        !< Values (present).
    real(R_P),    intent(in)    :: diag(nd)                        !< Diagonal (present).
-   real(R_P),    intent(in)    :: colour(nd)                      !< Colour of each row, 0 or 1 (present).
+   integer(I4P), intent(in)    :: colour(nd)                      !< Colour of each row, 0 or 1 (present).
    real(R_P),    intent(in)    :: rhs(nr)                         !< Right-hand side (present).
    real(R_P),    intent(in)    :: h(nh)                           !< Halo of e (present).
    real(R_P),    intent(inout) :: e(ne)                           !< Correction (present).
@@ -414,7 +417,7 @@ contains
 
    !$acc parallel loop gang vector present(rowptr, col, val, diag, colour, rhs, h, e) private(acc)
    do i=1, nrow
-      if (nint(colour(i)) == colr) then
+      if (colour(i) == colr) then
          acc = 0._R_P
          !$acc loop seq
          do k=rowptr(i), rowptr(i+1)-1

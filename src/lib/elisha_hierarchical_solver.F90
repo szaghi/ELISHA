@@ -36,7 +36,10 @@ module elisha_hierarchical_solver
 !<   to the other colour, so a colour updates in parallel) is asserted at assembly: every off-diagonal entry of every
 !<   level operator links cells of different colour (a halo column's colour is its cell's parity, decoded from its key),
 !<   `ELISHA_ERR_INTERNAL` otherwise. Smoothed levels have an even cell count along every periodic axis (below `lmin`
-!<   the blocks keep even cells, above it the level doubles), so a validated mesh never fails it.
+!<   the blocks keep even cells, above it the level doubles), so a validated mesh never fails it;
+!< - one M7 change (audit C3), not changing a bit either: the red-black colour of a level cell is an integer (`ivec`,
+!<   0 or 1), compared as such; ADAM stored it as a real and compared `nint` of it. The colour selects rows only and
+!<   enters no arithmetic, and `nint` of the stored 0.0 or 1.0 is that integer exactly.
 !< What did not change: every floating-point expression, every loop and its order, every accumulation, the assembly
 !< order of the triplets and the CSR rows, the halo plans, the FCG and V-cycle sequence and the MPI calls, so the
 !< potential, the iterations and the residual are meant to be ADAM's bitwise on every rank count (the tests hold them
@@ -233,7 +236,7 @@ type :: elisha_hierarchical_solver_object
    type(dcsr),   allocatable :: rl(:)                  !< Restriction l -> l-1 [lbot+1:lmax].
    type(dcsr),   allocatable :: pl(:)                  !< Prolongation l-1 -> l [lbot+1:lmax].
    type(rvec),   allocatable :: diag(:)                !< Level operator diagonals [lbot+1:lmax].
-   type(rvec),   allocatable :: colour(:)              !< Red-black colour (0, 1) of the level cells [lbot+1:lmax].
+   type(ivec),   allocatable :: colour(:)              !< Red-black colour (0, 1) of the level cells [lbot+1:lmax].
    real(R_P),    allocatable :: vol(:)                 !< Leaf cell volumes.
    ! domain boundaries (issue #87; per face, issue #84 E1b)
    integer(I4P)              :: bc(2,3)=ELISHA_BC_PERIODIC !< Kind per face [lo/hi, axis] (elisha_parameters).
@@ -812,6 +815,7 @@ contains
       nlc = self%nijk_of(lv-1)
       nloc = self%nloc_lev(lv) * self%ncb_of(lv)
       allocate(self%colour(lv)%v(max(nloc,1)), self%diag(lv)%v(max(nloc,1)))
+      self%colour(lv)%v = 0_I4P
       self%diag(lv)%v = 1._R_P
       if (nloc > 0) self%diag(lv)%v(1:nloc) = 0._R_P
       do q=1, self%nloc_lev(lv)
@@ -821,7 +825,7 @@ contains
                do i=1, nl(1)
                   cc = self%node_c(1:3,id_) * nl + [i-1, j-1, kk-1]
                   row = (q - 1) * self%ncb_of(lv) + self%lin_of(lv, [i, j, kk])
-                  self%colour(lv)%v(row) = real(mod(sum(cc), 2), R_P)
+                  self%colour(lv)%v(row) = mod(sum(cc), 2)
                   do pp=1, self%nd
                      dd = self%act(pp)
                      w = self%face_weight(lv, dd)
@@ -896,12 +900,12 @@ contains
          do k=m%rowptr(row), m%rowptr(row+1)-1
             if (m%col(k) == row) cycle
             if (m%col(k) <= m%nloc) then
-               colr = nint(self%colour(lv)%v(m%col(k)))
+               colr = self%colour(lv)%v(m%col(k))
             else
                call elisha_kdecode(hkey(m%col(k) - m%nloc), lvk, ck)
                colr = mod(sum(ck), 2)
             endif
-            if (colr == nint(self%colour(lv)%v(row))) then
+            if (colr == self%colour(lv)%v(row)) then
                call elisha_set_error(stat, errmsg, ELISHA_ERR_INTERNAL, HERE//': the red-black colouring of level '// &
                   trim(str(lv, .true.))//' fails: a row couples to a cell of its own colour (the device smoother '// &
                   'updates a colour in parallel)')
@@ -1850,7 +1854,7 @@ contains
          call self%comm%alltoallv_r(sbuf, m%scount, m%sdispl, halo, m%rcount, m%rdispl, stat)
          if (stat /= ELISHA_OK) return
          do i=1, m%nrow
-            if (nint(self%colour(lv)%v(i)) /= colr) cycle
+            if (self%colour(lv)%v(i) /= colr) cycle
             acc = 0._R_P
             do k=m%rowptr(i), m%rowptr(i+1)-1
                if (m%col(k) == i) cycle

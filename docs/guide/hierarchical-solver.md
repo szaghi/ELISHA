@@ -61,9 +61,10 @@ The plumbing changed as in the spectral solver:
 - failures return a status;
 - the root is the class of `elisha_spectral_solver_object`.
 
-Three changes leave every result bit unchanged:
+Four changes leave every result bit unchanged:
 - **Persistent halo buffers.** The host `apply` and `smooth` reuse halo buffers allocated once; ADAM allocated them at every call.
 - **Asserted colouring.** After each level operator is assembled, every off-diagonal entry must link the two red-black colours, which the device smoother relies on to update a colour in parallel.
+- **Integer colour (M7, audit C3).** A level cell's red-black colour is an integer, 0 or 1, on the host and on the device. ADAM stored it as a real and compared `nint` of it. The colour only selects rows, so no arithmetic changes.
 - **Mixed lookup keys.** The cell-key table mixes each key before its modulo. ADAM's `modulo(key, cap)` with linear probing clusters on the key lattice: about 51 000 probes per insert on a halo of 131 072 cells. The table maps a key to its value and ids are numbered in first-seen order, so no result depends on where a key sits.
 
 `elisha_test_hierarchical_parity_mpi` runs ELISHA's solver and ADAM's (compiled unchanged in the tests) on the same

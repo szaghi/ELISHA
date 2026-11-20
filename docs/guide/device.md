@@ -3,7 +3,8 @@
 ELISHA runs both solvers on NVIDIA GPUs: the spectral one with cuFFT, the hierarchical one with OpenACC. They are
 ADAM's device twins (`poisson_fft_fnl_object`, `poisson_mg_fnl_object`, ADAM 669d0bdd) on ELISHA's host solvers, with
 the device code unchanged: the same kernels, loop mappings, clauses, data directives, reductions and cuFFT plans
-(`-Minfo=accel` reports the same 9 + 10 kernels, line for line).
+(`-Minfo=accel` reports the same 9 + 10 kernels, line for line). One M7 change is in the smoother's kernel: the colour
+it tests is an integer instead of ADAM's real (audit C3), so it selects the same rows.
 
 ```fortran
 use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchical_solver_oac_object
