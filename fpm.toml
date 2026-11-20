@@ -138,3 +138,8 @@ main = "elisha_test_solver_mpi.F90"
 name = "elisha_test_facade_parity_mpi"
 source-dir = "src/tests"
 main = "elisha_test_facade_parity_mpi.F90"
+
+[[test]]
+name = "elisha_test_stencil_mpi"
+source-dir = "src/tests"
+main = "elisha_test_stencil_mpi.F90"

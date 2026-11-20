@@ -6,7 +6,9 @@ the device code unchanged: the same kernels, loop mappings, clauses, data direct
 (`-Minfo=accel` reports the same 9 + 10 kernels, line for line). One M7 change is in the smoother's kernel: the colour
 it tests is an integer instead of ADAM's real (audit C3), so it selects the same rows. A second M7 change (audit C5) is in
 the cuFFT backend: it places the eigenvalue parts and the transpose's row maps on the device once, with the plans,
-where ADAM copied them in at every solve. The arithmetic is unchanged.
+where ADAM copied them in at every solve. The arithmetic is unchanged. The opt-in stencil level operators
+([the hierarchical solver](./hierarchical-solver#stencil-level-operators)) run on the device as well, as one kernel
+per apply and per smoothing colour: block-interior rows as the stencil, the other rows from CSR.
 
 ```fortran
 use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchical_solver_oac_object

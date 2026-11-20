@@ -26,12 +26,14 @@ program elisha_bench_device_mpi
 !< only; fpm does not build `src/bench`). Mode `bench-nvf-oac` (`exe-bench-oac/`). Usage:
 !< `mpirun -np N exe-bench-oac/elisha_bench_device_mpi [reps [AE|EA [cases]]]`: `reps` the timed pairs (default 9),
 !< `EA` times ELISHA first in every pair (a control for an order bias; `AE`, the default, ADAM first), `cases` the
-!< letters of the cases (default `abcde`).
+!< letters of the cases (default `abcde`); `stencil` as a fourth argument sets the multigrid up with
+!< `level_operator=ELISHA_OPERATOR_STENCIL` (M7, audit C2; default `csr`).
 use mpi
 use openacc
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use, intrinsic :: iso_fortran_env, only : int64
-use elisha, only : I4P, R_P, ELISHA_OK, elisha_comm_object, elisha_mesh_object
+use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, elisha_comm_object, &
+                   elisha_mesh_object
 use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchical_solver_oac_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
@@ -49,6 +51,7 @@ logical                  :: efirst=.false. !< ELISHA first in every pair.
 character(:), allocatable :: msg       !< Message.
 character(16)            :: arg        !< Argument.
 character(16)            :: cases='abcde' !< The cases to run.
+integer(I4P)             :: lop=ELISHA_OPERATOR_CSR !< ELISHA's level operators (the multigrid).
 
 call ieee_get_halting_mode(ieee_usual, halting)
 call ieee_set_halting_mode(ieee_usual, .false.)
@@ -69,9 +72,14 @@ if (na > 1) then
    efirst = trim(arg) == 'EA'
 endif
 if (na > 2) call get_command_argument(3, cases)
+if (na > 3) then
+   call get_command_argument(4, arg)
+   if (trim(arg) == 'stencil') lop = ELISHA_OPERATOR_STENCIL
+endif
 if (c%rank == 0) then
-   print '(A,I0,A,I0,A,I0,A,A)', '# elisha_bench_device_mpi: ', c%nranks, ' rank(s), ', ndev, ' GPU(s) per node, ', &
-         reps, ' repetitions (max over ranks), order ', merge('E, A', 'A, E', efirst)
+   print '(A,I0,A,I0,A,I0,A,A,A,A)', '# elisha_bench_device_mpi: ', c%nranks, ' rank(s), ', ndev, ' GPU(s) per node, ', &
+         reps, ' repetitions (max over ranks), order ', merge('E, A', 'A, E', efirst), ', ELISHA level operators ', &
+         trim(merge('stencil', 'csr    ', lop == ELISHA_OPERATOR_STENCIL))
    print '(A)', '# case                      cells   lv  it path setup_A[s] setup_E[s] solve_A[s] solve_E[s] E/A(min) '// &
                 ' med_A[s]   med_E[s]  E/A(med) bitwise'
 endif
@@ -292,7 +300,7 @@ contains
    call adam%initialize(grid=grid, field=field, isolated=isolated)
    sa = elapsed(t0)
    t0 = mark()
-   call eli%setup(mesh, c, stat, msg, isolated=isolated)
+   call eli%setup(mesh, c, stat, msg, isolated=isolated, level_operator=lop)
    se = elapsed(t0)
    if (stat /= ELISHA_OK) error stop 'setup'
    ! one untimed pair (cold), checked bitwise, then the alternated timed cold solves

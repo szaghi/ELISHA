@@ -22,6 +22,10 @@ module elisha_parameters
 !< The solve paths (`elisha_solver_object%setup(..., path)`; the values are ADAM's `FLAIL_BACKEND_*`):
 !< `ELISHA_PATH_AUTO` (the spectral solver when every leaf is at one level, the hierarchical one otherwise),
 !< `ELISHA_PATH_SPECTRAL`, `ELISHA_PATH_HIERARCHICAL`.
+!<
+!< The hierarchical solver's level operators (`setup(..., level_operator)`, M7, audit C2): `ELISHA_OPERATOR_CSR` (the
+!< default, ADAM's) applies and smooths every row from its CSR entries; `ELISHA_OPERATOR_STENCIL` applies the rows of
+!< the cells inside a block (the constant-coefficient 7-point stencil) without reading their entries, the others by CSR.
 use penf, only : I4P
 implicit none
 private
@@ -33,6 +37,7 @@ public :: ELISHA_BC_ZERO_GHOSTS
 public :: ELISHA_BC_FREE_GHOSTS
 public :: ELISHA_BC_KINDS
 public :: ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
+public :: ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL
 
 integer(I4P), parameter :: ELISHA_BC_PERIODIC        = 0_I4P !< Periodic (both faces of the axis).
 integer(I4P), parameter :: ELISHA_BC_DIRICHLET       = 1_I4P !< Value at the face.
@@ -46,4 +51,6 @@ integer(I4P), parameter :: ELISHA_BC_KINDS(6)=[ELISHA_BC_PERIODIC, ELISHA_BC_DIR
 integer(I4P), parameter :: ELISHA_PATH_AUTO         = 0_I4P !< Spectral on a uniform mesh, hierarchical otherwise.
 integer(I4P), parameter :: ELISHA_PATH_SPECTRAL     = 1_I4P !< The spectral (FFT) solver, uniform meshes.
 integer(I4P), parameter :: ELISHA_PATH_HIERARCHICAL = 2_I4P !< The hierarchical (multigrid FCG) solver, any 2:1 mesh.
+integer(I4P), parameter :: ELISHA_OPERATOR_CSR      = 0_I4P !< Level operators from their CSR entries (default).
+integer(I4P), parameter :: ELISHA_OPERATOR_STENCIL  = 1_I4P !< Block-interior rows as a matrix-free 7-point stencil.
 endmodule elisha_parameters

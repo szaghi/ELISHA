@@ -15,11 +15,14 @@ program elisha_bench_hierarchical_mpi
 !< test (`scripts/run_tests.sh` runs `exe/` only; fpm does not build `src/bench`). Modes `bench-hierarchical-gnu`,
 !< `bench-hierarchical-nvf`. Usage: `mpirun -np N exe-bench/elisha_bench_hierarchical_mpi [reps [EA|AE [cases]]]`:
 !< `EA` times ELISHA first in every pair (a control for an order bias), the default is ADAM first; `cases` the letters
-!< of the cases to run (default `abcd`: the AMR setups at np > 1 take tens of seconds, so reruns pick their cases).
+!< of the cases to run (default `abcd`: the AMR setups at np > 1 take tens of seconds, so reruns pick their cases);
+!< `stencil` as a fourth argument sets ELISHA up with `level_operator=ELISHA_OPERATOR_STENCIL` (M7, audit C2; default
+!< `csr`).
 use mpi
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use, intrinsic :: iso_fortran_env, only : int64
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
+                   ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, &
                    elisha_comm_object, elisha_mesh_object, elisha_hierarchical_solver_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
@@ -36,6 +39,7 @@ logical                  :: efirst=.false. !< ELISHA first in every pair.
 character(:), allocatable :: msg       !< Message.
 character(16)            :: arg        !< Argument.
 character(16)            :: cases='abcd' !< The cases to run.
+integer(I4P)             :: lop=ELISHA_OPERATOR_CSR !< ELISHA's level operators.
 
 call ieee_get_halting_mode(ieee_usual, halting)
 call ieee_set_halting_mode(ieee_usual, .false.)
@@ -55,9 +59,14 @@ if (na > 1) then
    efirst = trim(arg) == 'EA'
 endif
 if (na > 2) call get_command_argument(3, cases)
+if (na > 3) then
+   call get_command_argument(4, arg)
+   if (trim(arg) == 'stencil') lop = ELISHA_OPERATOR_STENCIL
+endif
 if (c%rank == 0) then
-   print '(A,I0,A,I0,A,A)', '# elisha_bench_hierarchical_mpi: ', c%nranks, ' rank(s), ', reps, &
-         ' repetitions (max over ranks), order ', merge('E, A', 'A, E', efirst)
+   print '(A,I0,A,I0,A,A,A,A)', '# elisha_bench_hierarchical_mpi: ', c%nranks, ' rank(s), ', reps, &
+         ' repetitions (max over ranks), order ', merge('E, A', 'A, E', efirst), ', ELISHA level operators ', &
+         trim(merge('stencil', 'csr    ', lop == ELISHA_OPERATOR_STENCIL))
    print '(A)', '# case             cells  lv     it root setup_A[s] setup_E[s] solve_A[s] solve_E[s] E/A(min) '// &
                 ' med_A[s]   med_E[s]  E/A(med) bitwise'
 endif
@@ -167,9 +176,9 @@ contains
    sa = tmax(MPI_WTIME() - t0)
    call MPI_BARRIER(MPI_COMM_WORLD, ierr) ; t0 = MPI_WTIME()
    if (present(bc)) then
-      call eli%setup(mesh, c, stat, msg, bc=bc, root_cells=root_cells)
+      call eli%setup(mesh, c, stat, msg, bc=bc, root_cells=root_cells, level_operator=lop)
    else
-      call eli%setup(mesh, c, stat, msg, isolated=isolated)
+      call eli%setup(mesh, c, stat, msg, isolated=isolated, level_operator=lop)
    endif
    se = tmax(MPI_WTIME() - t0)
    if (stat /= ELISHA_OK) error stop 'setup'

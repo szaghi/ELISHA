@@ -4,6 +4,8 @@
 #
 #   sbatch --export=ALL,ELISHA_SRC=/home/szaghi/elisha-m4m5 scripts/medooza/elisha-bench.slurm
 #   sbatch --export=ALL,ELISHA_SRC=...,ELISHA_BENCH_ARGS='21',ELISHA_BENCH_CASES='abcde',ELISHA_BENCH_NP='1 2' ...
+#   sbatch --export=ALL,ELISHA_SRC=...,ELISHA_BENCH_OPS='csr stencil' ...  (the level operators of ELISHA's multigrid,
+#                                                                             interleaved per np and order)
 #SBATCH -A iacroma
 #SBATCH -p dev-gn
 #SBATCH -J elisha-bench
@@ -21,6 +23,7 @@ SRC=${ELISHA_SRC:?set ELISHA_SRC to the sandbox}
 REPS=${ELISHA_BENCH_ARGS:-15}
 CASES=${ELISHA_BENCH_CASES:-abcde}
 NPS=${ELISHA_BENCH_NP:-1}
+OPS=${ELISHA_BENCH_OPS:-csr}
 RUN=${ELISHA_RUN:-/ifs/hpc/home/szaghi/elisha-tests/bench-$SLURM_JOB_ID}
 FFTW=/ifs/hpc/home/szaghi/adam-tests/opt/fftw-3.3.10/lib
 
@@ -30,7 +33,7 @@ export LIBRARY_PATH=$FFTW:${LIBRARY_PATH:-} LD_LIBRARY_PATH=$FFTW:${LD_LIBRARY_P
 export OMPI_MCA_coll_ucc_enable=0 OMPI_MCA_coll_hcoll_enable=0
 mkdir -p "$RUN"
 {
-   echo "job $SLURM_JOB_ID on $(hostname), $(date -Is), reps $REPS, cases $CASES, np $NPS"
+   echo "job $SLURM_JOB_ID on $(hostname), $(date -Is), reps $REPS, cases $CASES, np $NPS, operators $OPS"
    nvidia-smi --query-gpu=name,driver_version,clocks.max.sm,memory.free --format=csv,noheader
 } | tee "$RUN/env.txt"
 cd "$SRC" || exit 1
@@ -38,9 +41,12 @@ fobis build --mode bench-nvf-oac --varset iac > "$RUN/build.log" 2>&1 || { echo 
 cd "$RUN" || exit 1
 for np in $NPS; do
    for order in AE EA; do
-      echo "== np $np order $order" | tee -a "$RUN/summary.txt"
-      srun --mpi=pmix -n "$np" --overlap "$SRC/exe-bench-oac/elisha_bench_device_mpi" "$REPS" "$order" "$CASES" \
-         2>&1 | tee -a "$RUN/summary.txt"
+      for op in $OPS; do
+         extra=() ; [ "$op" = stencil ] && extra=(stencil) # the bench's 4th argument; CSR is its default
+         echo "== np $np order $order operator $op" | tee -a "$RUN/summary.txt"
+         srun --mpi=pmix -n "$np" --overlap "$SRC/exe-bench-oac/elisha_bench_device_mpi" "$REPS" "$order" "$CASES" \
+            "${extra[@]}" 2>&1 | tee -a "$RUN/summary.txt"
+      done
    done
 done
 echo "bench done" | tee -a "$RUN/summary.txt"

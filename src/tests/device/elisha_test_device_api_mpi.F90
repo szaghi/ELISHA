@@ -14,7 +14,10 @@ program elisha_test_device_api_mpi
 !< 2 ghost layers, the leaves dealt round-robin): hierarchical AMR periodic (a corner refined: the root periodic),
 !< ghost-Dirichlet AMR (the root extended odd about the ghost centres), Dirichlet/Neumann AMR with boundary values (the
 !< root extended over 2n and 4n cells), isolated AMR (the James step); spectral uniform periodic and D/N; and the facade
-!< (`elisha_solver_object` with both device molds) on an AMR and a uniform mesh, D against E only. Rank 0 prints one
+!< (`elisha_solver_object` with both device molds) on an AMR and a uniform mesh, D against E only. And the stencil level
+!< operators on the device (M7, audit C2, `level_operator=ELISHA_OPERATOR_STENCIL`) against CSR, AMR periodic and D/N
+!< with boundary values: the potential and the energy within `TOL_STENCIL` relative, the iterations within one (printed:
+!< whether bitwise, and the difference). Rank 0 prints one
 !< line per case and `elisha_test_device_api_mpi: ok` or `FAILED`. Built only in `tests-nvf-oac`; each rank takes the
 !< GPU of its node-local rank; GPU-aware MPI above one rank.
 use mpi
@@ -22,6 +25,7 @@ use, intrinsic :: iso_fortran_env, only : int64
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use openacc
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
+                   ELISHA_OPERATOR_STENCIL, &
                    elisha_comm_object, elisha_mesh_object, elisha_solver_object, elisha_diagnostics_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
@@ -32,6 +36,7 @@ use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchic
 implicit none
 real(R_P),    parameter  :: FACTOR=2.5_R_P      !< Source factor.
 real(R_P),    parameter  :: TOL=1.e-11_R_P      !< FCG tolerance.
+real(R_P),    parameter  :: TOL_STENCIL=1.e-9_R_P !< Stencil against CSR: potential and energy, relative.
 integer(I4P), parameter  :: MAX_IT=100_I4P      !< FCG iterations allowed.
 integer(I4P), parameter  :: NG=2_I4P            !< Ghost layers.
 integer(I4P), parameter  :: D=ELISHA_BC_DIRICHLET, NM=ELISHA_BC_NEUMANN, G=ELISHA_BC_DIRICHLET_GHOST !< Kinds.
@@ -62,6 +67,8 @@ if (failures == 0) then
    call fft_case('FFT D/N,N/D,D/D', [2,2,2], H16, F_, bc=kinds(D,NM, NM,D, D,D))
    call facade_case('facade AMR (hierarchical)', T_)
    call facade_case('facade uniform (spectral)', F_)
+   call stencil_case('MG stencil AMR periodic', [2,2,2], H16, [0,0,0], T_)
+   call stencil_case('MG stencil AMR D/N + g', [2,2,2], H16, [0,1,0], F_, bc=kinds(D,NM, NM,D, D,D))
 endif
 nfail = failures
 call MPI_ALLREDUCE(MPI_IN_PLACE, nfail, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr)
@@ -318,6 +325,61 @@ contains
    call report(label//': on_device vs host arrays', nbad)
    call e%destroy ; call dv%destroy ; call mesh%destroy
    endsubroutine facade_case
+
+   subroutine stencil_case(label, nblk0, dx0, refine, periodic, bc)
+   !< The device hierarchical solver with the stencil level operators against CSR (host arrays, cold solves).
+   character(*), intent(in)           :: label     !< Case label.
+   integer,      intent(in)           :: nblk0(3)  !< Blocks per axis at level 0.
+   real(R_P),    intent(in)           :: dx0(3)    !< Cell spacing at level 0.
+   integer,      intent(in)           :: refine(3) !< The refined block.
+   logical,      intent(in)           :: periodic  !< Every axis periodic.
+   integer(I4P), intent(in), optional :: bc(2,3)   !< Kinds.
+   type(grid_object)                           :: grid  !< ADAM's grid (unused).
+   type(field_object)                          :: field !< ADAM's field (unused).
+   type(elisha_mesh_object)                    :: mesh  !< ELISHA's mesh.
+   type(elisha_hierarchical_solver_oac_object) :: e, s  !< CSR, stencil.
+   real(R_P), allocatable :: buf(:), pe(:,:,:,:), ps(:,:,:,:), gv(:) !< Source, potentials, boundary values.
+   real(R_P)              :: ee, es, r(1) !< Energies, the relative difference.
+   integer(I4P)           :: nb, i, nbad(1) !< Blocks, counter, differing bits.
+   integer                :: ierr_ !< MPI error status.
+
+   ncase = ncase + 1
+   call make_mesh(nblk0, dx0, .true., refine, periodic, grid, field, mesh, buf, nb)
+   allocate(pe(1-NG:N3(1)+NG,1-NG:N3(2)+NG,1-NG:N3(3)+NG,1:max(nb,1)))
+   allocate(ps, mold=pe) ; pe = 0._R_P ; ps = 0._R_P
+   call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
+   if (stat == ELISHA_OK) call s%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, &
+                                       level_operator=ELISHA_OPERATOR_STENCIL)
+   if (stat /= ELISHA_OK) then
+      call fail(label//': setup: '//msg) ; return
+   endif
+   allocate(gv(max(e%nbnd,1)))
+   gv = 0._R_P
+   do i=1, e%nbnd
+      gv(i) = 0.3_R_P + sin(3._R_P * e%bnd_x(1,i) + 0.4_R_P) + 0.2_R_P * e%bnd_x(3,i)
+   enddo
+   if (present(bc)) then
+      call e%solve_packed(mesh, buf, FACTOR, pe, stat, msg, energy=ee, ghost=gv)
+      if (stat == ELISHA_OK) call s%solve_packed(mesh, buf, FACTOR, ps, stat, msg, energy=es, ghost=gv)
+   else
+      call e%solve_packed(mesh, buf, FACTOR, pe, stat, msg, energy=ee)
+      if (stat == ELISHA_OK) call s%solve_packed(mesh, buf, FACTOR, ps, stat, msg, energy=es)
+   endif
+   if (stat /= ELISHA_OK) then
+      call fail(label//': solve: '//msg) ; return
+   endif
+   nbad = differ(flat(ps), flat(pe)) + differ([es], [ee])
+   r = max(maxval(abs(flat(ps) - flat(pe))) / max(maxval(abs(flat(pe))), tiny(1._R_P)), abs(es - ee) / max(abs(ee), &
+           tiny(1._R_P)))
+   call MPI_ALLREDUCE(MPI_IN_PLACE, nbad, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr_)
+   call MPI_ALLREDUCE(MPI_IN_PLACE, r, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr_)
+   if (c%rank == 0) print '(A,A,A,I0,A,I0,A,ES9.2,A,A)', 'elisha_test_device_api_mpi: ', label, ': iterations ', &
+      e%iterations, '/', s%iterations, ', rel diff ', r(1), ', bitwise ', merge('yes', 'no ', nbad(1) == 0)
+   if (.not.(r(1) <= TOL_STENCIL) .or. abs(s%iterations - e%iterations) > 1) then
+      if (c%rank == 0) call fail(label//': the stencil does not agree with CSR')
+   endif
+   call e%destroy ; call s%destroy ; call mesh%destroy
+   endsubroutine stencil_case
 
    pure function flat(p) result(v)
    !< A 4-D array as a vector.

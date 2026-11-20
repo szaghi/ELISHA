@@ -190,7 +190,7 @@ contains
    endsubroutine reset_wall
 
    subroutine setup(self, mesh, comm, stat, errmsg, path, isolated, bc, dg_order, tolerance, max_iterations, root_cells, &
-                    spectral_mold, hierarchical_mold)
+                    spectral_mold, hierarchical_mold, level_operator)
    !< Choose and set up the solver for the current mesh: call it on the initial mesh and after every regrid (it rebuilds
    !< the solver). Collective over `comm`, which the solver keeps (a copy: the caller frees the communicator after
    !< `destroy`). The mesh is validated here (collectively) unless the caller did it.
@@ -202,7 +202,9 @@ contains
    !< wide D(G), spectral path only (`ELISHA_ERR_DG_AMR` on the hierarchical one). `tolerance`, `max_iterations`,
    !< `root_cells`: the hierarchical solver's controls (ignored on the spectral path). `spectral_mold`: the spectral
    !< solver's type (and the hierarchical root's); `hierarchical_mold`: the hierarchical solver's; without them, the host
-   !< solvers. On failure the facade is left not set up (`path()` 0).
+   !< solvers. `level_operator` (M7, audit C2): the hierarchical solver's level operators, `ELISHA_OPERATOR_CSR` (default)
+   !< or `ELISHA_OPERATOR_STENCIL` (bitwise the same results; ignored on the spectral path). On failure the facade is left
+   !< not set up (`path()` 0).
    class(elisha_solver_object),                     intent(inout)         :: self      !< The solver.
    type(elisha_mesh_object),                        intent(inout)         :: mesh      !< The mesh (validated here if
                                                                                        !< not yet).
@@ -223,6 +225,8 @@ contains
    class(elisha_spectral_solver_object),            intent(in),  optional :: spectral_mold !< The spectral backend.
    class(elisha_hierarchical_solver_object),        intent(in),  optional :: hierarchical_mold !< The hierarchical
                                                                                                !< backend.
+   integer(I4P),                                    intent(in),  optional :: level_operator !< Hierarchical: the
+                                                                                            !< level operators' form.
    integer(I4P)                                                           :: path_     !< The path asked.
    integer(I4P)                                                           :: dg_order_ !< The operator's order.
    integer(I4P)                                                           :: bc_(2,3)  !< The kinds (periodic if none).
@@ -289,7 +293,7 @@ contains
       endif
       call self%hierarchical%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg, tolerance=tolerance,         &
                                    max_iterations=max_iterations, coarse=spectral_mold, isolated=isolated, bc=bc, &
-                                   root_cells=root_cells)
+                                   root_cells=root_cells, level_operator=level_operator)
       if (stat /= ELISHA_OK) then
          call self%destroy
          return

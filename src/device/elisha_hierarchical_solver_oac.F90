@@ -33,6 +33,10 @@ module elisha_hierarchical_solver_oac
 !<   root) went through the host at every V-cycle. And `solve_packed(on_device)` (`stage_source`,
 !<   `stage_potential`): the device source copied to a host copy, `phi` to the host and back, around the host-side
 !<   right-hand side and ghost fill, which stay on the host (their sums and products in the host's order);
+!< - one M7 option (audit C2): with `level_operator=ELISHA_OPERATOR_STENCIL` the level operators' block-interior rows
+!<   are applied and smoothed as the host's stencil (`spmv_sten_dev`, `sweep_sten_dev`: one row per thread, the cell
+!<   decoded from the row, the same terms in the same order as its CSR entries), the other rows by CSR in the same
+!<   kernel;
 !< - one M7 change (audit C3): the colour is the host's integer (`ivec`, 0 or 1), placed by `place_i` and compared as
 !<   such in `sweep_dev`; ADAM's was a real compared through `nint`. It selects rows only, so no result changes, and
 !<   the kernel reads 4 bytes per row for it instead of 8.
@@ -88,7 +92,8 @@ endtype elisha_hierarchical_solver_oac_object
 
 contains
    ! public methods
-   subroutine setup_oac(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells)
+   subroutine setup_oac(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells, &
+                        level_operator)
    !< As `elisha_hierarchical_solver_object%setup`; without `coarse`, the coarsest level (and the James step's Green's
    !< function) on cuFFT. Then the operators and the work vectors go to the device.
    class(elisha_hierarchical_solver_oac_object), intent(inout)        :: self      !< The solver.
@@ -102,6 +107,7 @@ contains
    logical,                        intent(in),           optional     :: isolated  !< Free-space boundaries (James).
    integer(I4P),                   intent(in),           optional     :: bc(2,3)   !< Kinds per face [lo/hi, axis].
    integer(I4P),                   intent(in),           optional     :: root_cells !< Most cells of the root.
+   integer(I4P),                   intent(in),           optional     :: level_operator !< The level operators' form.
    type(elisha_spectral_solver_cufft_object)                          :: cufft_mold !< The cuFFT root, by default.
    integer(I4P)                                                       :: code      !< Status of the placement.
 
@@ -112,12 +118,13 @@ contains
    if (present(coarse)) then
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
-                                                        coarse=coarse, isolated=isolated, bc=bc, root_cells=root_cells)
+                                                        coarse=coarse, isolated=isolated, bc=bc, root_cells=root_cells, &
+                                                        level_operator=level_operator)
    else
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=cufft_mold, isolated=isolated, bc=bc,             &
-                                                        root_cells=root_cells)
+                                                        root_cells=root_cells, level_operator=level_operator)
    endif
    if (stat /= ELISHA_OK) return
    call self%work_place(attach=.true., stat=code)
@@ -137,8 +144,15 @@ contains
    integer(I4P),                                 intent(out)   :: stat  !< Status.
 
    call halo_dev(self, m, x, stat) ; if (stat /= ELISHA_OK) return
-   if (m%nrow > 0) call spmv_dev(nrow=m%nrow, nloc=m%nloc, nnz=size(m%col), nx=size(x), ny=size(y), nh=size(self%dhb), &
-                                 rowptr=m%rowptr, col=m%col, val=m%val, x=x, h=self%dhb, y=y)
+   if (m%nrow == 0) return
+   if (m%stencil) then ! the block-interior rows as the stencil (M7, audit C2)
+      call spmv_sten_dev(nrow=m%nrow, nloc=m%nloc, nnz=size(m%col), nx=size(x), ny=size(y), nh=size(self%dhb), &
+                         rowptr=m%rowptr, col=m%col, val=m%val, x=x, h=self%dhb, y=y, nl=m%snl, lo=m%slo,     &
+                         hi=m%shi, nd=m%snd, off=m%soff, w=m%sw)
+   else
+      call spmv_dev(nrow=m%nrow, nloc=m%nloc, nnz=size(m%col), nx=size(x), ny=size(y), nh=size(self%dhb), &
+                    rowptr=m%rowptr, col=m%col, val=m%val, x=x, h=self%dhb, y=y)
+   endif
    endsubroutine apply_oac
 
    subroutine smooth_oac(self, lv, e, rhs, order, stat)
@@ -156,11 +170,20 @@ contains
    do sw=1, self%sweeps
       do cc_=0, 1
          call halo_dev(self, self%al(lv), e, stat) ; if (stat /= ELISHA_OK) return
-         if (self%al(lv)%nrow > 0) &
+         if (self%al(lv)%nrow == 0) cycle
+         if (self%al(lv)%stencil) then ! the block-interior rows as the stencil (M7, audit C2)
+            associate(m=>self%al(lv))
+            call sweep_sten_dev(nrow=m%nrow, nloc=m%nloc, nnz=size(m%col), ne=size(e), nr=size(rhs), nh=size(self%dhb), &
+                                nd=size(self%diag(lv)%v), colr=mod(cc_ + order, 2), rowptr=m%rowptr, col=m%col,         &
+                                val=m%val, diag=self%diag(lv)%v, colour=self%colour(lv)%v, rhs=rhs, h=self%dhb, e=e,    &
+                                nl=m%snl, lo=m%slo, hi=m%shi, ns=m%snd, off=m%soff, w=m%sw)
+            endassociate
+         else
             call sweep_dev(nrow=self%al(lv)%nrow, nloc=self%al(lv)%nloc, nnz=size(self%al(lv)%col), ne=size(e),  &
                            nr=size(rhs), nh=size(self%dhb), nd=size(self%diag(lv)%v), colr=mod(cc_ + order, 2), &
                            rowptr=self%al(lv)%rowptr, col=self%al(lv)%col, val=self%al(lv)%val,                &
                            diag=self%diag(lv)%v, colour=self%colour(lv)%v, rhs=rhs, h=self%dhb, e=e)
+         endif
       enddo
    enddo
    endsubroutine smooth_oac
@@ -487,6 +510,124 @@ contains
       y(i) = acc
    enddo
    endsubroutine spmv_dev
+
+   subroutine spmv_sten_dev(nrow, nloc, nnz, nx, ny, nh, rowptr, col, val, x, h, y, nl, lo, hi, nd, off, w)
+   !< y = A_l x on the device, one row per thread (M7, audit C2): a block-interior row (its cell decoded from the row) as
+   !< the 7-point stencil, its terms in its CSR entries' order (per active axis -w x_c, w x_low, -w x_c, w x_high);
+   !< every other row from its CSR entries, as `spmv_dev`.
+   integer(I4P), intent(in)    :: nrow, nloc, nnz, nx, ny, nh !< Sizes.
+   integer(I4P), intent(in)    :: rowptr(nrow+1)              !< Row pointers (present).
+   integer(I4P), intent(in)    :: col(nnz)                    !< Column slots (present).
+   real(R_P),    intent(in)    :: val(nnz)                    !< Values (present).
+   real(R_P),    intent(in)    :: x(nx)                       !< Local columns (present).
+   real(R_P),    intent(in)    :: h(nh)                       !< Halo columns (present).
+   real(R_P),    intent(inout) :: y(ny)                       !< Result (present).
+   integer(I4P), intent(in)    :: nl(3), lo(3), hi(3)         !< Cells per block, the interior per axis.
+   integer(I4P), intent(in)    :: nd                          !< Active axes.
+   integer(I4P), intent(in)    :: off(3)                      !< Row offsets per active axis.
+   real(R_P),    intent(in)    :: w(3)                        !< Face weights per active axis.
+   real(R_P)                   :: acc                         !< Accumulator.
+   integer(I4P)                :: i, k, rb, ii, jj, kk        !< Counters, the row in its block, the cell.
+   integer(I4P)                :: n1, n2, nb, o1, o2, o3      !< Scalars of the stencil.
+   real(R_P)                   :: w1, w2, w3                  !< Weights.
+   integer(I4P)                :: l1, l2, l3, u1, u2, u3      !< The interior per axis.
+
+   n1 = nl(1) ; n2 = nl(2) ; nb = nl(1) * nl(2) * nl(3)
+   o1 = off(1) ; o2 = off(2) ; o3 = off(3) ; w1 = w(1) ; w2 = w(2) ; w3 = w(3)
+   l1 = lo(1) ; l2 = lo(2) ; l3 = lo(3) ; u1 = hi(1) ; u2 = hi(2) ; u3 = hi(3)
+   !$acc parallel loop gang vector present(rowptr, col, val, x, h, y) private(acc, rb, ii, jj, kk, k)
+   do i=1, nrow
+      rb = mod(i - 1, nb) ; ii = mod(rb, n1) + 1 ; jj = mod(rb / n1, n2) + 1 ; kk = rb / (n1 * n2) + 1
+      acc = 0._R_P
+      if (ii < l1 .or. ii > u1 .or. jj < l2 .or. jj > u2 .or. kk < l3 .or. kk > u3) then
+         !$acc loop seq
+         do k=rowptr(i), rowptr(i+1)-1
+            if (col(k) <= nloc) then
+               acc = acc + val(k) * x(col(k))
+            else
+               acc = acc + val(k) * h(col(k) - nloc)
+            endif
+         enddo
+      else
+         acc = acc + (-w1) * x(i)
+         acc = acc + w1 * x(i - o1)
+         acc = acc + (-w1) * x(i)
+         acc = acc + w1 * x(i + o1)
+         if (nd > 1) then
+            acc = acc + (-w2) * x(i)
+            acc = acc + w2 * x(i - o2)
+            acc = acc + (-w2) * x(i)
+            acc = acc + w2 * x(i + o2)
+         endif
+         if (nd > 2) then
+            acc = acc + (-w3) * x(i)
+            acc = acc + w3 * x(i - o3)
+            acc = acc + (-w3) * x(i)
+            acc = acc + w3 * x(i + o3)
+         endif
+      endif
+      y(i) = acc
+   enddo
+   endsubroutine spmv_sten_dev
+
+   subroutine sweep_sten_dev(nrow, nloc, nnz, ne, nr, nh, nd, colr, rowptr, col, val, diag, colour, rhs, h, e, nl, lo, hi, &
+                             ns, off, w)
+   !< One colour of a red-black sweep on the device (M7, audit C2): a block-interior row as the stencil, its neighbours in
+   !< its CSR entries' order; every other row from its CSR entries, as `sweep_dev`.
+   integer(I4P), intent(in)    :: nrow, nloc, nnz, ne, nr, nh, nd !< Sizes.
+   integer(I4P), intent(in)    :: colr                            !< Colour of this pass.
+   integer(I4P), intent(in)    :: rowptr(nrow+1)                  !< Row pointers (present).
+   integer(I4P), intent(in)    :: col(nnz)                        !< Column slots (present).
+   real(R_P),    intent(in)    :: val(nnz)                        !< Values (present).
+   real(R_P),    intent(in)    :: diag(nd)                        !< Diagonal (present).
+   integer(I4P), intent(in)    :: colour(nd)                      !< Colour of each row, 0 or 1 (present).
+   real(R_P),    intent(in)    :: rhs(nr)                         !< Right-hand side (present).
+   real(R_P),    intent(in)    :: h(nh)                           !< Halo of e (present).
+   real(R_P),    intent(inout) :: e(ne)                           !< Correction (present).
+   integer(I4P), intent(in)    :: nl(3), lo(3), hi(3)             !< Cells per block, the interior per axis.
+   integer(I4P), intent(in)    :: ns                              !< Active axes.
+   integer(I4P), intent(in)    :: off(3)                          !< Row offsets per active axis.
+   real(R_P),    intent(in)    :: w(3)                            !< Face weights per active axis.
+   real(R_P)                   :: acc                             !< Off-diagonal sum.
+   integer(I4P)                :: i, k, rb, ii, jj, kk            !< Counters, the row in its block, the cell.
+   integer(I4P)                :: n1, n2, nb, o1, o2, o3          !< Scalars of the stencil.
+   real(R_P)                   :: w1, w2, w3                      !< Weights.
+   integer(I4P)                :: l1, l2, l3, u1, u2, u3          !< The interior per axis.
+
+   n1 = nl(1) ; n2 = nl(2) ; nb = nl(1) * nl(2) * nl(3)
+   o1 = off(1) ; o2 = off(2) ; o3 = off(3) ; w1 = w(1) ; w2 = w(2) ; w3 = w(3)
+   l1 = lo(1) ; l2 = lo(2) ; l3 = lo(3) ; u1 = hi(1) ; u2 = hi(2) ; u3 = hi(3)
+   !$acc parallel loop gang vector present(rowptr, col, val, diag, colour, rhs, h, e) private(acc, rb, ii, jj, kk, k)
+   do i=1, nrow
+      if (colour(i) == colr) then
+         rb = mod(i - 1, nb) ; ii = mod(rb, n1) + 1 ; jj = mod(rb / n1, n2) + 1 ; kk = rb / (n1 * n2) + 1
+         acc = 0._R_P
+         if (ii < l1 .or. ii > u1 .or. jj < l2 .or. jj > u2 .or. kk < l3 .or. kk > u3) then
+            !$acc loop seq
+            do k=rowptr(i), rowptr(i+1)-1
+               if (col(k) == i) cycle
+               if (col(k) <= nloc) then
+                  acc = acc + val(k) * e(col(k))
+               else
+                  acc = acc + val(k) * h(col(k) - nloc)
+               endif
+            enddo
+         else
+            acc = acc + w1 * e(i - o1)
+            acc = acc + w1 * e(i + o1)
+            if (ns > 1) then
+               acc = acc + w2 * e(i - o2)
+               acc = acc + w2 * e(i + o2)
+            endif
+            if (ns > 2) then
+               acc = acc + w3 * e(i - o3)
+               acc = acc + w3 * e(i + o3)
+            endif
+         endif
+         e(i) = (rhs(i) - acc) / diag(i)
+      endif
+   enddo
+   endsubroutine sweep_sten_dev
 
    subroutine sweep_dev(nrow, nloc, nnz, ne, nr, nh, nd, colr, rowptr, col, val, diag, colour, rhs, h, e)
    !< One colour of a red-black Gauss-Seidel sweep on the device: e(i) = (rhs(i) - sum_{j /= i} a_ij e_j) / a_ii for the

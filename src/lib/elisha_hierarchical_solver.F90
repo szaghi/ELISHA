@@ -46,6 +46,13 @@ module elisha_hierarchical_solver
 !<   `destroy` (collective, as `setup` is); ADAM exchanged with `MPI_ALLTOALLV` over P-sized count arrays at every call.
 !<   The buffers, the displacements and the values received are the all-to-all's; a rank never sends to itself (its
 !<   own columns are local), so a plan has no self edge.
+!< - one M7 option (audit C2), off by default: `setup(..., level_operator=ELISHA_OPERATOR_STENCIL)` applies and smooths
+!<   the rows of the cells inside a block (no face on the block's boundary along an active axis) of every level
+!<   operator A_l as the 7-point stencil they are, reading `x` at the six neighbours and the per-axis weight instead of
+!<   the CSR entries (12 entries, about 140 B per row with its row pointer, against the row's 7 values of `x`); every
+!<   other row (a block face: a halo, a 2:1 seam's ghost term, a domain face's kind) keeps its CSR entries. The stencil
+!<   takes the CSR entries' order (per active axis: the diagonal's -w, the low neighbour's w, the diagonal's -w, the
+!<   high neighbour's w; the smoother the neighbours only), so the results are bitwise the CSR ones.
 !< What did not change: every floating-point expression, every loop and its order, every accumulation, the assembly
 !< order of the triplets and the CSR rows, the halo plans, the FCG and V-cycle sequence and the MPI calls, so the
 !< potential, the iterations and the residual are meant to be ADAM's bitwise on every rank count (the tests hold them
@@ -145,7 +152,8 @@ use elisha_comm, only : elisha_comm_object, elisha_halo_plan
 use elisha_mesh, only : elisha_mesh_object
 use elisha_keys, only : elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_table, ELISHA_KEY_LEVEL_OFFSET
 use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
-                              ELISHA_BC_ZERO_GHOSTS, ELISHA_PATH_HIERARCHICAL
+                              ELISHA_BC_ZERO_GHOSTS, ELISHA_PATH_HIERARCHICAL, ELISHA_OPERATOR_CSR, &
+                              ELISHA_OPERATOR_STENCIL
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_INTERNAL, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE, &
                           ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_GHOST_VALUES, ELISHA_ERR_ARGUMENT, elisha_set_error
 use elisha_setup_checks, only : elisha_check_bc, elisha_check_ghost_count, elisha_check_isolated, &
@@ -179,6 +187,20 @@ type :: dcsr
    integer(I4P), allocatable :: sidx(:)                 !< Local column indices to send.
    integer(I4P), allocatable :: rcount(:), rdispl(:)    !< Receive counts and displacements per rank (halo order).
    type(elisha_halo_plan)    :: plan                    !< The exchange among the ranks named by the counts (M7, B1).
+   ! a level operator's block-interior rows as a 7-point stencil (M7, audit C2): set only with ELISHA_OPERATOR_STENCIL
+   logical                   :: stencil=.false.         !< The block-interior rows are applied as a stencil.
+   integer(I4P)              :: snblk=0                 !< Blocks (rows = snblk * product(snl), block-major).
+   integer(I4P)              :: snd=0                   !< Active axes.
+   integer(I4P)              :: snl(3)=1                !< Cells per block per axis.
+   integer(I4P)              :: slo(3)=1, shi(3)=1      !< The interior cells per axis: slo..shi (1..1 on a null axis).
+   integer(I4P)              :: soff(3)=0               !< Row offset of the next cell along each active axis (act order).
+   real(R_P)                 :: sw(3)=0._R_P            !< Face weight along each active axis (act order).
+   integer(I4P)              :: snt=0                   !< Terms of a stencil row (4 per active axis).
+   integer(I4P)              :: sto(12)=0               !< Their row offsets, in the CSR entries' order.
+   real(R_P)                 :: stv(12)=0._R_P          !< Their values, in the CSR entries' order.
+   integer(I4P)              :: sno=0                   !< Off-diagonal terms (2 per active axis, the smoother's).
+   integer(I4P)              :: soo(6)=0                !< Their row offsets.
+   real(R_P)                 :: sov(6)=0._R_P           !< Their values.
 endtype dcsr
 
 type :: rvec
@@ -270,6 +292,7 @@ type :: elisha_hierarchical_solver_object
    real(R_P)                 :: tolerance=1.e-10_R_P   !< Relative max-norm residual to stop.
    integer(I4P)              :: max_iterations=200_I4P !< FCG iterations at most.
    integer(I4P)              :: sweeps=2_I4P           !< Red-black sweeps per level, down and up.
+   integer(I4P)              :: level_operator=ELISHA_OPERATOR_CSR !< The level operators' form (M7, audit C2).
    integer(I4P)              :: iterations=0_I4P       !< Iterations of the last solve.
    real(R_P)                 :: residual=0._R_P        !< Relative residual of the last solve.
    real(R_P)                 :: tolerance_used=0._R_P  !< Stop tolerance of the last solve (the round-off floor of the
@@ -394,11 +417,13 @@ contains
    self%lbot = 0_I4P
    self%root_max = 0_I4P
    self%has_guess = .false.
+   self%level_operator = ELISHA_OPERATOR_CSR
    self%comm = elisha_comm_object() ! a copy: the caller frees its communicator
    self%is_initialized = .false.
    endsubroutine destroy
 
-   subroutine setup(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells)
+   subroutine setup(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells, &
+                    level_operator)
    !< Check the mesh and the arguments; take the leaves, derive the hierarchy, assemble the operator, the ghost fill and
    !< the preconditioner, set up the root solver: of the dynamic type of `coarse` when given (a device backend passes
    !< its spectral solver), the host (FFTW) one otherwise. With `isolated` (issue #87), also the ghost-to-ghost Green's
@@ -408,6 +433,8 @@ contains
    !< round. Without it, every bounded axis takes ghost-Dirichlet faces. `root_cells` (#84 E5c): the levels inside the
    !< blocks below lmin stop once the root has at most this many cells (default: the root solver's `root_cells_max` for
    !< the root's transform growth; tests force the levels with a small one, the bench measures others).
+   !< `level_operator` (M7, audit C2): `ELISHA_OPERATOR_CSR` (default) or `ELISHA_OPERATOR_STENCIL` (the block-interior
+   !< rows of the level operators as a stencil; bitwise the same results), else `ELISHA_ERR_ARGUMENT`.
    class(elisha_hierarchical_solver_object), intent(inout)        :: self      !< The solver.
    type(elisha_mesh_object),       intent(inout)                  :: mesh      !< The mesh (validated here if not yet).
    type(elisha_comm_object),       intent(in)                     :: comm      !< Communication context (initialised).
@@ -420,6 +447,8 @@ contains
    integer(I4P),                   intent(in),           optional :: bc(2,3)   !< Kinds per face [lo/hi, axis].
    integer(I4P),                   intent(in),           optional :: root_cells !< Most cells of the root (default:
                                                                                 !< the backend's).
+   integer(I4P),                   intent(in),           optional :: level_operator !< ELISHA_OPERATOR_CSR (default)
+                                                                                    !< or ELISHA_OPERATOR_STENCIL.
    type(elisha_spectral_solver_object) :: host_fft   !< The host spectral solver (its root_cells_max, without coarse).
    integer(I4P), allocatable :: cnt(:,:)             !< Level blocks per rank and level.
    integer(I4P)              :: d, n, id, l, b, p    !< Counters.
@@ -438,6 +467,14 @@ contains
       if (stat /= ELISHA_OK) return
    endif
    ! the argument refusals (the same on every rank: pure checks of the same arguments)
+   if (present(level_operator)) then
+      if (all(level_operator /= [ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL])) then
+         call elisha_set_error(stat, errmsg, ELISHA_ERR_ARGUMENT, HERE//': level_operator is not ELISHA_OPERATOR_CSR '// &
+                               'or ELISHA_OPERATOR_STENCIL')
+         return
+      endif
+      self%level_operator = level_operator
+   endif
    if (present(isolated)) self%isolated = isolated
    call elisha_check_isolated(self%isolated, present(bc), 0_I4P, mesh%null, mesh%periodic, mesh%dx0, stat, errmsg)
    if (stat /= ELISHA_OK) return
@@ -900,11 +937,41 @@ contains
       enddo
       call self%assemble(ta, nloc, lv, self%al(lv), stat, errmsg, halo_keys=hkey) ; if (stat /= ELISHA_OK) return
       call check_colours(lv, hkey) ; if (stat /= ELISHA_OK) return
+      if (self%level_operator == ELISHA_OPERATOR_STENCIL) call stencil_of(lv)
       call self%assemble(te, nloc, lv-1, self%el(lv), stat, errmsg) ; if (stat /= ELISHA_OK) return
       call self%assemble(tr, self%nloc_lev(lv-1) * self%ncb_of(lv-1), lv, self%rl(lv), stat, errmsg)
       if (stat /= ELISHA_OK) return
       call self%assemble(tp, nloc, lv-1, self%pl(lv), stat, errmsg)
       endsubroutine level_ops
+
+      subroutine stencil_of(lv)
+      !< A_l's block-interior rows as a 7-point stencil (M7, audit C2): the blocks, their cells, the interior range per
+      !< axis (2..n-1 on an active axis, 1..1 on a null one), and per active axis (act order) the row offset of the next
+      !< cell and the face weight, the very w of the rows' CSR entries (`level_ops`).
+      integer(I4P), intent(in) :: lv !< Level.
+      integer(I4P)             :: pp, dd, nl(3) !< Counters, cells per block.
+
+      nl = self%nijk_of(lv)
+      associate(m=>self%al(lv))
+      m%stencil = .true.
+      m%snblk = self%nloc_lev(lv)
+      m%snd = self%nd
+      m%snl = nl
+      m%slo = merge(1, 2, self%null) ; m%shi = merge(nl, nl - 1, self%null)
+      m%soff = 0 ; m%sw = 0._R_P
+      do pp=1, self%nd
+         dd = self%act(pp)
+         m%sw(pp) = self%face_weight(lv, dd)
+         m%soff(pp) = merge(1, merge(nl(1), nl(1) * nl(2), dd == 2), dd == 1)
+         ! the terms in level_ops' order: -w at the cell, w at the low neighbour, -w at the cell, w at the high one
+         m%sto(4*pp-3:4*pp) = [0, -m%soff(pp), 0, m%soff(pp)]
+         m%stv(4*pp-3:4*pp) = [-m%sw(pp), m%sw(pp), -m%sw(pp), m%sw(pp)]
+         m%soo(2*pp-1:2*pp) = [-m%soff(pp), m%soff(pp)]
+         m%sov(2*pp-1:2*pp) = [m%sw(pp), m%sw(pp)]
+      enddo
+      m%snt = 4 * self%nd ; m%sno = 2 * self%nd
+      endassociate
+      endsubroutine stencil_of
 
       subroutine check_colours(lv, hkey)
       !< The red-black assertion (audit A3): every off-diagonal entry of A_l (the entries `smooth` reads: a column
@@ -1268,7 +1335,8 @@ contains
    real(R_P),                      intent(in)    :: x(1:)  !< Local column-space vector.
    real(R_P),                      intent(inout) :: y(1:)  !< Result (rows).
    integer(I4P),                   intent(out)   :: stat   !< Status.
-   integer(I4P)                                  :: i, k   !< Counters.
+   integer(I4P)                                  :: i, k, p !< Counters.
+   integer(I4P)                                  :: q, ii, jj, kk !< Block, cell (stencil rows).
    real(R_P)                                     :: acc    !< Accumulator.
 
    associate(sbuf=>self%xsend, halo=>self%xhalo)
@@ -1277,18 +1345,56 @@ contains
    enddo
    call m%plan%exchange_r(sbuf, halo, stat)
    if (stat /= ELISHA_OK) return
-   do i=1, m%nrow
-      acc = 0._R_P
-      do k=m%rowptr(i), m%rowptr(i+1)-1
-         if (m%col(k) <= m%nloc) then
-            acc = acc + m%val(k) * x(m%col(k))
+   if (.not.m%stencil) then ! ADAM's loop, unchanged
+      do i=1, m%nrow
+         acc = 0._R_P
+         do k=m%rowptr(i), m%rowptr(i+1)-1
+            if (m%col(k) <= m%nloc) then
+               acc = acc + m%val(k) * x(m%col(k))
+            else
+               acc = acc + m%val(k) * halo(m%col(k) - m%nloc)
+            endif
+         enddo
+         y(i) = acc
+      enddo
+   else ! the block-interior rows as the stencil, in their CSR entries' order (M7, audit C2)
+      do q=1, m%snblk
+         do kk=1, m%snl(3)
+            do jj=1, m%snl(2)
+               do ii=1, m%snl(1)
+                  i = (q - 1) * m%snl(1) * m%snl(2) * m%snl(3) + ii + (jj - 1) * m%snl(1) + (kk - 1) * m%snl(1) * m%snl(2)
+                  if (ii < m%slo(1) .or. ii > m%shi(1) .or. jj < m%slo(2) .or. jj > m%shi(2) .or. &
+                      kk < m%slo(3) .or. kk > m%shi(3)) then
+                     y(i) = csr_row(i)
+                  else
+                     acc = 0._R_P
+                     do p=1, m%snt
+                        acc = acc + m%stv(p) * x(i + m%sto(p))
+                     enddo
+                     y(i) = acc
+                  endif
+               enddo
+            enddo
+         enddo
+      enddo
+   endif
+   endassociate
+   contains
+      function csr_row(r) result(a)
+      !< Row r of m x from its CSR entries.
+      integer(I4P), intent(in) :: r  !< Row.
+      real(R_P)                :: a  !< Its value.
+      integer(I4P)             :: k_ !< Counter.
+
+      a = 0._R_P
+      do k_=m%rowptr(r), m%rowptr(r+1)-1
+         if (m%col(k_) <= m%nloc) then
+            a = a + m%val(k_) * x(m%col(k_))
          else
-            acc = acc + m%val(k) * halo(m%col(k) - m%nloc)
+            a = a + m%val(k_) * self%xhalo(m%col(k_) - m%nloc)
          endif
       enddo
-      y(i) = acc
-   enddo
-   endassociate
+      endfunction csr_row
    endsubroutine apply
 
    subroutine vec_fill(x, a, n)
@@ -1947,7 +2053,8 @@ contains
    real(R_P),                intent(in)    :: rhs(1:) !< Right-hand side.
    integer(I4P),             intent(in)    :: order   !< 0: colour 0 first, 1: colour 1 first.
    integer(I4P),             intent(out)   :: stat    !< Status.
-   integer(I4P)                            :: sw, cc_, colr, i, k !< Counters.
+   integer(I4P)                            :: sw, cc_, colr, i, k, p !< Counters.
+   integer(I4P)                            :: q, ii, jj, kk !< Block, cell (stencil rows).
    real(R_P)                               :: acc     !< Off-diagonal sum.
 
    stat = ELISHA_OK
@@ -1960,22 +2067,65 @@ contains
          enddo
          call m%plan%exchange_r(sbuf, halo, stat)
          if (stat /= ELISHA_OK) return
-         do i=1, m%nrow
-            if (self%colour(lv)%v(i) /= colr) cycle
-            acc = 0._R_P
-            do k=m%rowptr(i), m%rowptr(i+1)-1
-               if (m%col(k) == i) cycle
-               if (m%col(k) <= m%nloc) then
-                  acc = acc + m%val(k) * e(m%col(k))
-               else
-                  acc = acc + m%val(k) * halo(m%col(k) - m%nloc)
-               endif
+         if (.not.m%stencil) then ! ADAM's loop, unchanged
+            do i=1, m%nrow
+               if (self%colour(lv)%v(i) /= colr) cycle
+               acc = 0._R_P
+               do k=m%rowptr(i), m%rowptr(i+1)-1
+                  if (m%col(k) == i) cycle
+                  if (m%col(k) <= m%nloc) then
+                     acc = acc + m%val(k) * e(m%col(k))
+                  else
+                     acc = acc + m%val(k) * halo(m%col(k) - m%nloc)
+                  endif
+               enddo
+               e(i) = (rhs(i) - acc) / self%diag(lv)%v(i)
             enddo
-            e(i) = (rhs(i) - acc) / self%diag(lv)%v(i)
-         enddo
+         else ! the block-interior rows as the stencil, the neighbours in their CSR entries' order (M7, audit C2)
+            do q=1, m%snblk
+               do kk=1, m%snl(3)
+                  do jj=1, m%snl(2)
+                     do ii=1, m%snl(1)
+                        i = (q - 1) * m%snl(1) * m%snl(2) * m%snl(3) + ii + (jj - 1) * m%snl(1) + &
+                            (kk - 1) * m%snl(1) * m%snl(2)
+                        if (self%colour(lv)%v(i) /= colr) cycle
+                        if (ii < m%slo(1) .or. ii > m%shi(1) .or. jj < m%slo(2) .or. jj > m%shi(2) .or. &
+                            kk < m%slo(3) .or. kk > m%shi(3)) then
+                           acc = csr_off(i)
+                        else
+                           acc = 0._R_P
+                           do p=1, m%sno
+                              acc = acc + m%sov(p) * e(i + m%soo(p))
+                           enddo
+                        endif
+                        e(i) = (rhs(i) - acc) / self%diag(lv)%v(i)
+                     enddo
+                  enddo
+               enddo
+            enddo
+         endif
       enddo
    enddo
    endassociate
+   contains
+      function csr_off(r) result(a)
+      !< The off-diagonal sum of row r of A_l e from its CSR entries.
+      integer(I4P), intent(in) :: r  !< Row.
+      real(R_P)                :: a  !< Its value.
+      integer(I4P)             :: k_ !< Counter.
+
+      a = 0._R_P
+      associate(m_=>self%al(lv))
+      do k_=m_%rowptr(r), m_%rowptr(r+1)-1
+         if (m_%col(k_) == r) cycle
+         if (m_%col(k_) <= m_%nloc) then
+            a = a + m_%val(k_) * e(m_%col(k_))
+         else
+            a = a + m_%val(k_) * self%xhalo(m_%col(k_) - m_%nloc)
+         endif
+      enddo
+      endassociate
+      endfunction csr_off
    endsubroutine smooth
 
    subroutine vcycle(self, r_leaf, z_leaf, stat, errmsg)

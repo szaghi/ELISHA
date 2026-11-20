@@ -48,6 +48,8 @@ public :: ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_
 public :: ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_BC_KINDS
 ! solve paths (elisha_parameters)
 public :: ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
+! level operators of the hierarchical solver (elisha_parameters)
+public :: ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL
 ! the setup checks (elisha_setup_checks)
 public :: elisha_check_bc, elisha_check_dg_order, elisha_check_ghost_count, elisha_check_isolated
 public :: elisha_check_isolated_mesh, elisha_check_path, elisha_check_periodicity, elisha_check_reach

@@ -15,7 +15,7 @@ call mg%solve_packed(mesh, buf, factor, phi, stat, errmsg, energy=e, ghost=g)
 
 | Procedure | Role |
 |-----------|------|
-| `setup(mesh, comm, stat, errmsg[, tolerance][, max_iterations][, coarse][, isolated][, bc][, root_cells])` | Validate the mesh, check the arguments, assemble the operators and the level hierarchy, size the root (a spectral solver of the class of `coarse`) |
+| `setup(mesh, comm, stat, errmsg[, tolerance][, max_iterations][, coarse][, isolated][, bc][, root_cells][, level_operator])` | Validate the mesh, check the arguments, assemble the operators and the level hierarchy, size the root (a spectral solver of the class of `coarse`) |
 | `solve_packed(mesh, buf, factor, phi, stat, errmsg[, energy][, ghost])` | FCG to `tolerance`, warm-started while the mesh is unchanged; `phi` with every ghost layer; `ghost`: the value of each boundary face |
 | `symmetry_defect(x, y, stat)`, `apply_a(x, y, stat)` | Verification: `abs(x.Ay - y.Ax) / (abs(x) abs(Ay))`, `y = A x` |
 | `apply_b(g, y)`, `apply_bt(x, s)` | `y = B g`, `s = B^T x` over the boundary faces (`nbnd`, `bnd_row`, `bnd_w`, `bnd_kind`, `bnd_dir`, `bnd_x`) |
@@ -88,6 +88,39 @@ It runs 17 cases:
 
 All 17 are bitwise at np 1, 2 and 3 on gfortran (debug and optimised), nvfortran and ifx. Reassociating `beta`, or
 swapping the red-black order, breaks 14 of the 17; the three exact-root cases never smooth.
+
+## Stencil level operators
+
+`setup(..., level_operator=ELISHA_OPERATOR_STENCIL)` is an opt-in of M7 (audit C2); the default,
+`ELISHA_OPERATOR_CSR`, is ADAM's. It changes how the V-cycle's level operators `A_l` are applied and smoothed. A row
+whose cell lies inside its block on every active axis is the constant-coefficient 7-point stencil: its six
+neighbours are in the same block and level, and no seam, halo or domain face touches it. Such a row is computed from
+`x` at the seven cells and one weight per axis, without reading its 12 CSR entries and its row pointer (about 140 B a
+row). Every other row keeps its CSR entries: a block face reads a halo, a 2:1 seam's ghost term, or a domain face's
+kind. The CSR stays assembled, so both forms coexist on one level. The stencil takes rows in the CSR entries' order:
+for each active axis, the diagonal's -w, the low neighbour's w, the diagonal's -w, the high neighbour's w; the
+smoother takes the neighbours only.
+
+| Compiler | Stencil against CSR |
+|----------|---------------------|
+| gfortran 16.2, ifx 2026.2 | bitwise: operators, smoother, potential, iterations |
+| nvfortran 26.9 (`-fast`) | operators and smoother within 4e-16, potential within 9e-16, the same iterations |
+
+The stencil takes 42% of the rows on blocks of 8^3 cells (6^3 of 8^3); levels with 4 cells per block or fewer have
+few or no interior rows. `elisha_test_stencil_mpi` checks it on uniform, AMR, Dirichlet/Neumann with boundary values,
+isolated and 2-D meshes.
+
+Measured on the host (`elisha_bench_hierarchical_mpi ... stencil`; cases (a) AMR periodic and (d) uniform D/N, np 1,
+2, 4, both orders, i9-13900KF under WSL), the mean E/A against ADAM was:
+
+| Compiler | CSR | Stencil |
+|----------|-----|---------|
+| gfortran | 0.92 | 0.93 |
+| nvfortran | 0.98 | 0.93 |
+
+The run-to-run noise is about 5%, so the stencil shows no measurable gain on the host. It stays opt-in. The device
+kernels, `spmv_sten_dev` and `sweep_sten_dev`, are where memory bandwidth is the limit, and that measurement is on the
+A30.
 
 ## Performance
 
