@@ -37,7 +37,7 @@ modes = static-gnu shared-gnu
         tests-gnu tests-gnu-debug tests-gnu-coverage tests-gnu-serial
         tests-nvf tests-nvf-debug tests-nvf-oac tests-nvf-serial
         tests-intel tests-intel-debug
-        bench-gnu bench-nvf
+        bench-gnu bench-nvf bench-hierarchical-gnu bench-hierarchical-nvf
 
 [common-variables]
 $EXDIRS = PENF/src/tests/ PENF/src/third_party/ PENF/scripts/ PENF/docs/
@@ -162,6 +162,16 @@ template  = template-bench template-gnu template-mpi template-release
 help      = Benchmark of the spectral solver against ADAM's, nvfortran + MPI (HPC-X), optimised, CPU
 template  = template-bench template-nvf template-mpi template-release
 
+# the hierarchical solver's benchmark: a second program, so a second pair of modes (a FoBiS mode builds one `target`;
+# without a target it would build every program of its src dirs, the tests included); same exe-bench/ directory
+[bench-hierarchical-gnu]
+help      = Benchmark of the hierarchical solver against ADAM's multigrid, gfortran + MPI, optimised
+template  = template-bench-hierarchical template-gnu template-mpi template-release
+
+[bench-hierarchical-nvf]
+help      = Benchmark of the hierarchical solver against ADAM's multigrid, nvfortran + MPI (HPC-X), optimised, CPU
+template  = template-bench-hierarchical template-nvf template-mpi template-release
+
 # ── templates: left wins when a mode lists several, so the role template (lib, tests) comes first ──
 [template-base]
 preproc         = -D_FFTW
@@ -219,6 +229,13 @@ src       = src/lib/ src/tests/ src/bench/
 build_dir = exe-bench/
 target    = src/bench/elisha_bench_spectral_mpi.F90
 output    = elisha_bench_spectral_mpi
+ext_libs  = fftw3
+
+[template-bench-hierarchical]
+src       = src/lib/ src/tests/ src/bench/
+build_dir = exe-bench/
+target    = src/bench/elisha_bench_hierarchical_mpi.F90
+output    = elisha_bench_hierarchical_mpi
 ext_libs  = fftw3
 
 # MPI: the compiler's wrapper (mpif90 of the Open MPI / HPC-X first on PATH); serial: the single-rank stub of the
