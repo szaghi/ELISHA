@@ -20,7 +20,14 @@ module elisha_spectral_solver_cufft
 !<   `ELISHA_ERR_FFT_PLAN` when cuFFT fails (the private procedures return the cuFFT status where ADAM stopped, and
 !<   run on as ADAM's success path does: no construct moved); the others had no failure path with cuFFT;
 !< - ADAM's builds without cuFFT stopped at the plans (an AMD build); this module needs `-D_CUFFT` (and `-acc`,
-!<   `-cudalib=cufft`): without it the build stops (`#error`), so no hook carries ADAM's `#else` branches.
+!<   `-cudalib=cufft`): without it the build stops (`#error`), so no hook carries ADAM's `#else` branches;
+!< - one M7 change (audit C5), not changing a bit: the setup-time constants the kernels read are device-resident,
+!<   placed once with the plans (`enter data copyin`) and released by the plan hooks (`exit data delete`) before the
+!<   base `destroy` deallocates them: the eigenvalue parts `lam1`, `lam2`, `lam3` (`make_plans` or `slab_make_plans`,
+!<   released by `destroy_plans`), and the transpose's row ranges `yr` and row owners `yown` (`slab_make_plans`,
+!<   released by `slab_destroy_plans`). The kernels name them `present`; ADAM copied them in at every call
+!<   (`copyin(lam1, lam2, lam3)` in the rank-0 solve and the slab division, `copyin(yr, yown)` in the transpose's pack
+!<   and unpack). A setup after a regrid destroys first, so the copies are never doubled.
 !< The `R8P` of ADAM is ELISHA's `R_P` (R8P, `elisha_kind_parameters`).
 !<
 !< ADAM's description, unchanged: the gather to rank 0, the placement and the scatter of `phi` with its ghosts are the
@@ -62,6 +69,8 @@ type, extends(elisha_spectral_solver_object) :: elisha_spectral_solver_cufft_obj
    integer(c_int) :: plan_sz2z=0_c_int  !< cuFFT slab plan: one row of z-lines, Z2Z.
    logical        :: has_slab_plans=.false. !< The cuFFT slab plans exist.
    logical        :: slab_on_device=.false. !< The slab arrays are on the device.
+   logical        :: lam_on_device=.false.  !< lam1, lam2, lam3 are on the device (M7, audit C5).
+   logical        :: maps_on_device=.false. !< yr, yown are on the device (M7, audit C5).
    integer(I4P), allocatable :: yown(:)     !< Owner rank of each y-row [0:m(2)-1].
    complex(R_P), allocatable :: t_sb(:)     !< Device: the transpose's send buffer.
    complex(R_P), allocatable :: t_rb(:)     !< Device: the transpose's receive buffer.
@@ -97,8 +106,12 @@ contains
    if (self%khat_on_device) then
       !$acc exit data delete(self%khat)
    endif
+   if (self%lam_on_device) then
+      !$acc exit data delete(self%lam1, self%lam2, self%lam3)
+   endif
    self%has_plans = .false.
    self%khat_on_device = .false.
+   self%lam_on_device = .false.
    endsubroutine destroy_plans_cufft
 
    subroutine make_plans_cufft(self, stat, errmsg)
@@ -130,6 +143,7 @@ contains
       return
    endif
    self%has_plans = .true.
+   call place_lam(self)
    endsubroutine make_plans_cufft
 
    subroutine transform_cufft(self, factor, stat, errmsg)
@@ -228,6 +242,10 @@ contains
    allocate(self%t_sb(nb), self%t_rb(nb))
    !$acc enter data create(self%slab_r, self%slab_c, self%pen, self%t_sb, self%t_rb)
    self%slab_on_device = .true.
+   ! the setup-time constants of the kernels, resident (M7, audit C5)
+   !$acc enter data copyin(self%yr, self%yown)
+   self%maps_on_device = .true.
+   call place_lam(self)
    endsubroutine slab_make_plans_cufft
 
    subroutine slab_destroy_plans_cufft(self)
@@ -246,6 +264,10 @@ contains
          !$acc exit data delete(self%khat_pen)
       endif
    endif
+   if (self%maps_on_device) then
+      !$acc exit data delete(self%yr, self%yown)
+   endif
+   self%maps_on_device = .false.
    ierr = 0_c_int
    self%has_slab_plans = .false.
    self%slab_on_device = .false.
@@ -388,6 +410,16 @@ contains
    endsubroutine slab_update_cufft
 
    ! private procedures
+   subroutine place_lam(self)
+   !< The eigenvalue parts to the device, once per setup (M7, audit C5): `make_plans` or `slab_make_plans` calls it,
+   !< `destroy_plans` releases them.
+   class(elisha_spectral_solver_cufft_object), intent(inout) :: self !< The solver.
+
+   if (self%lam_on_device) return
+   !$acc enter data copyin(self%lam1, self%lam2, self%lam3)
+   self%lam_on_device = .true.
+   endsubroutine place_lam
+
    subroutine planes_dev(plan, m1, m2, h1, nz, forward, r, c, ierr)
    !< The 2-D transform of every plane on the device (r and c present), one plan executed on each plane in turn.
    integer(c_int), intent(in)    :: plan            !< cuFFT plan: one plane, D2Z or Z2D.
@@ -444,7 +476,7 @@ contains
    complex(R_P), intent(inout) :: sb(nb)             !< Send buffer (present).
    integer(I4P)                :: x, y, z, r         !< Counters, rank.
 
-   !$acc parallel loop collapse(3) present(c, sb) copyin(yr, yown) private(r)
+   !$acc parallel loop collapse(3) present(c, sb, yr, yown) private(r)
    do z=1, nz
       do y=1, m2
          do x=1, h1
@@ -464,7 +496,7 @@ contains
    complex(R_P), intent(inout) :: c(h1,m2,nz)        !< Transformed planes (present).
    integer(I4P)                :: x, y, z, r         !< Counters, rank.
 
-   !$acc parallel loop collapse(3) present(c, rb) copyin(yr, yown) private(r)
+   !$acc parallel loop collapse(3) present(c, rb, yr, yown) private(r)
    do z=1, nz
       do y=1, m2
          do x=1, h1
@@ -530,14 +562,14 @@ contains
    integer(I4P), intent(in)    :: m3, h1, ny, y0 !< Sizes, first local row.
    integer(I4P), intent(in)    :: n1, n2, n3     !< Eigenvalue parts' sizes.
    real(R_P),    intent(in)    :: scale          !< Factor over the unnormalised transform pair.
-   real(R_P),    intent(in)    :: l1(0:n1-1)     !< Eigenvalue part along x.
-   real(R_P),    intent(in)    :: l2(0:n2-1)     !< Eigenvalue part along y.
-   real(R_P),    intent(in)    :: l3(0:n3-1)     !< Eigenvalue part along z.
+   real(R_P),    intent(in)    :: l1(0:n1-1)     !< Eigenvalue part along x (present).
+   real(R_P),    intent(in)    :: l2(0:n2-1)     !< Eigenvalue part along y (present).
+   real(R_P),    intent(in)    :: l3(0:n3-1)     !< Eigenvalue part along z (present).
    complex(R_P), intent(inout) :: p(m3,h1,ny)    !< Lines (present).
    real(R_P)                   :: lam            !< Eigenvalue of the mode.
    integer(I4P)                :: i, j, k        !< Counters.
 
-   !$acc parallel loop collapse(3) present(p) copyin(l1, l2, l3) private(lam)
+   !$acc parallel loop collapse(3) present(p, l1, l2, l3) private(lam)
    do j=1, ny
       do i=1, h1
          do k=1, m3
@@ -600,7 +632,7 @@ contains
    real(R_P)                     :: lam                 !< Eigenvalue of the mode.
    integer(I4P)                  :: i, j, k             !< Counters.
 
-   !$acc data copyin(lam1, lam2, lam3) copy(f) create(f_hat)
+   !$acc data copy(f) create(f_hat)
    !$acc host_data use_device(f, f_hat)
    ierr = cufftExecD2Z(plan_d2z, f, f_hat)
    !$acc end host_data
