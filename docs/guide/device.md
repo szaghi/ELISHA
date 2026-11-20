@@ -1,0 +1,64 @@
+# The device backends
+
+ELISHA runs both solvers on NVIDIA GPUs: the spectral one with cuFFT, the hierarchical one with OpenACC. They are
+ADAM's device twins (`poisson_fft_fnl_object`, `poisson_mg_fnl_object`, ADAM 669d0bdd) on ELISHA's host solvers, with
+the device code unchanged: the same kernels, loop mappings, clauses, data directives, reductions and cuFFT plans
+(`-Minfo=accel` reports the same 9 + 10 kernels, line for line).
+
+```fortran
+use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchical_solver_oac_object
+type(elisha_hierarchical_solver_oac_object) :: mg
+call mg%setup(mesh, comm, stat, errmsg)                      ! the root on cuFFT by default
+call mg%solve_packed(mesh, buf, factor, phi, stat, errmsg)
+```
+
+| Type | Extends | Where it computes |
+|------|---------|-------------------|
+| `elisha_spectral_solver_cufft_object` | `elisha_spectral_solver_object` | The slab transform on each rank's GPU (cuFFT), the transpose on device buffers (GPU-aware MPI) |
+| `elisha_hierarchical_solver_oac_object` | `elisha_hierarchical_solver_object` | The FCG iteration and the V-cycle on the device: SpMV and red-black sweeps one row per thread, device dots and max-norms; the operators assembled on the host and placed once |
+
+The right-hand side, the root (through the host to the cuFFT solver), the James step and the ghost fill's placement
+stay on the host, as in ADAM.
+
+## Build
+
+| Mode | Content |
+|------|---------|
+| `static-nvf-oac` | The library with the device backends (target `src/device/elisha_device.F90`): `-acc -gpu=$GPU_CC -cudalib=cufft -D_CUFFT` |
+| `tests-nvf-oac` | Every test, plus the device tests in `src/tests/device/`, into `exe-oac/` |
+| `bench-nvf-oac` | The device benchmark against ADAM's device solvers, into `exe-bench-oac/` |
+
+The device sources live in `src/device/`, a sibling of `src/lib/`, so that the host modes and fpm never compile
+them. The compute capability comes from `--varset`: `cc80`, `cc89`, `cc90`, or `iac` (cc80 with CUDA 12.9, for
+drivers that cannot run CUDA 13). One GPU per node-local rank. More than one rank needs a GPU-aware MPI, because the
+halos and the transpose are exchanged on device buffers.
+
+## Verification
+
+Every device test ran on an A30 (driver 575.51, nvfortran 26.9, CUDA 12.9) through `scripts/medooza/elisha-tests.slurm`.
+
+| Test | Result |
+|------|--------|
+| `elisha_test_device_parity_mpi`: ELISHA's device solvers against ADAM's device solvers on the same source (phi with ghosts, energy; multigrid iterations, residuals, `A x`, symmetry defect, cold and warm solves); 11 spectral and 12 hierarchical cases | Bitwise on all 23 at np 1, 2, 3 (ranks sharing the GPU) |
+| The same, device against host | FFT 6.5e-16, multigrid `A x` bitwise, potential 1.8e-15, energy 1.3e-15 (relative) |
+| `elisha_test_adam_device_oracle_mpi`: ADAM's own device against its host | FFT 5.2e-16, `A x` bitwise, potential 5.9e-16 |
+
+The device and the host differ in the last bits only: the device sums its dots in another order and contracts
+products into FMAs.
+
+## Performance
+
+`exe-bench-oac/elisha_bench_device_mpi [reps [AE|EA [cases]]]` and `scripts/medooza/elisha-bench.slurm`. These are
+one A30, 15 repetitions, both orders, every row bitwise.
+
+| Case | Cells | Solve, ELISHA (median) | E/A (median), AE / EA | Setup ADAM / ELISHA |
+|------|-------|------------------------|-----------------------|---------------------|
+| FFT periodic | 128^3 | 0.029 s | 0.99 / 0.99 | 0.04 / 0.04 s |
+| FFT isolated | 128^3 | 0.10 s | 0.96 / 0.93 | 0.7 / 0.7 s |
+| FFT periodic | 64^3 | 0.0057 s | 0.98 / 0.98 | 0.02 / 0.006 s |
+| Multigrid AMR periodic | 491 520 | 0.065 s | 1.00 / 0.98 | 6.5 / 2.5 s |
+| Multigrid AMR isolated | 491 520 | 0.13 s | 1.03 / 0.94 | 6.5 / 2.6 s |
+| Multigrid AMR periodic | 3 932 160 | 0.34 s | 0.99 / 0.99 | 22.7 / 21.7 s |
+| Multigrid AMR isolated | 3 932 160 | 0.60 s | 0.99 / 0.98 | 22.2 / 22.2 s |
+
+The 3.9 M-cell periodic solve (0.34 s) is ADAM's documented FNL time on one A30 (0.33 s).

@@ -42,6 +42,7 @@ export default withMermaid({
             { text: 'Errors, communicator and mesh', link: '/guide/errors-comm-mesh' },
             { text: 'The spectral solver', link: '/guide/spectral-solver' },
             { text: 'The hierarchical solver', link: '/guide/hierarchical-solver' },
+            { text: 'The device backends', link: '/guide/device' },
           ],
         },
         {
