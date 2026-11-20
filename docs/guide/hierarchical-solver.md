@@ -91,8 +91,8 @@ swapping the red-black order, breaks 14 of the 17; the three exact-root cases ne
 
 ## Stencil level operators
 
-`setup(..., level_operator=ELISHA_OPERATOR_STENCIL)` is an opt-in of M7 (audit C2); the default,
-`ELISHA_OPERATOR_CSR`, is ADAM's. It changes how the V-cycle's level operators `A_l` are applied and smoothed. A row
+`setup(..., level_operator=ELISHA_OPERATOR_STENCIL)` is an M7 change (audit C2): the OpenACC backend's default; the
+host solver's default stays `ELISHA_OPERATOR_CSR`, ADAM's. It changes how the V-cycle's level operators `A_l` are applied and smoothed. A row
 whose cell lies inside its block on every active axis is the constant-coefficient 7-point stencil: its six
 neighbours are in the same block and level, and no seam, halo or domain face touches it. Such a row is computed from
 `x` at the seven cells and one weight per axis, without reading its 12 CSR entries and its row pointer (about 140 B a
@@ -122,8 +122,9 @@ Measured on the host (`elisha_bench_hierarchical_mpi ... stencil`; cases (a) AMR
 The run-to-run noise is about 5%, so the stencil shows no measurable gain on the host. On the A30, where memory
 bandwidth is the limit (`spmv_sten_dev`, `sweep_sten_dev`), it gains 10 to 15% on the multigrid solve: on the
 3.9 M-cell periodic case, E/A goes from 0.97 / 0.94 with CSR to 0.83 / 0.83 (job 1369037,
-[Performance](./performance#step-09-stencil-level-operators-audit-c2-opt-in)). It stays opt-in; whether it becomes
-the default is the owner's decision.
+[Performance](./performance#step-09-stencil-level-operators-audit-c2)). So it is the default of the OpenACC
+backend, where it stays bitwise ADAM FNL's, and an option on the host, where CSR stays the default (no gain there,
+and nvfortran `-fast` rounds differently).
 
 ## Performance
 

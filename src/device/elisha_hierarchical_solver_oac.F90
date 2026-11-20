@@ -33,10 +33,11 @@ module elisha_hierarchical_solver_oac
 !<   root) went through the host at every V-cycle. And `solve_packed(on_device)` (`stage_source`,
 !<   `stage_potential`): the device source copied to a host copy, `phi` to the host and back, around the host-side
 !<   right-hand side and ghost fill, which stay on the host (their sums and products in the host's order);
-!< - one M7 option (audit C2): with `level_operator=ELISHA_OPERATOR_STENCIL` the level operators' block-interior rows
-!<   are applied and smoothed as the host's stencil (`spmv_sten_dev`, `sweep_sten_dev`: one row per thread, the cell
-!<   decoded from the row, the same terms in the same order as its CSR entries), the other rows by CSR in the same
-!<   kernel;
+!< - one M7 change (audit C2), this backend's default: `level_operator=ELISHA_OPERATOR_STENCIL` (the host's default
+!<   is CSR), the level operators' block-interior rows applied and smoothed as the host's stencil (`spmv_sten_dev`,
+!<   `sweep_sten_dev`: one row per thread, the cell decoded from the row, the same terms in the same order as its CSR
+!<   entries), the other rows by CSR in the same kernel: bitwise ADAM FNL's results on the A30, 10-15% faster
+!<   (medooza job 1369037); `level_operator=ELISHA_OPERATOR_CSR` selects ADAM's loops;
 !< - one M7 change (audit C3): the colour is the host's integer (`ivec`, 0 or 1), placed by `place_i` and compared as
 !<   such in `sweep_dev`; ADAM's was a real compared through `nint`. It selects rows only, so no result changes, and
 !<   the kernel reads 4 bytes per row for it instead of 8.
@@ -60,6 +61,7 @@ use elisha_mesh, only : elisha_mesh_object
 use elisha_spectral_solver, only : elisha_spectral_solver_object
 use elisha_spectral_solver_cufft, only : elisha_spectral_solver_cufft_object
 use elisha_hierarchical_solver, only : elisha_hierarchical_solver_object, dcsr
+use elisha_parameters, only : ELISHA_OPERATOR_STENCIL
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_NOT_INITIALIZED, elisha_set_error
 implicit none
 private
@@ -95,7 +97,8 @@ contains
    subroutine setup_oac(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells, &
                         level_operator)
    !< As `elisha_hierarchical_solver_object%setup`; without `coarse`, the coarsest level (and the James step's Green's
-   !< function) on cuFFT. Then the operators and the work vectors go to the device.
+   !< function) on cuFFT; without `level_operator`, the stencil (`ELISHA_OPERATOR_STENCIL`, the host's default is CSR).
+   !< Then the operators and the work vectors go to the device.
    class(elisha_hierarchical_solver_oac_object), intent(inout)        :: self      !< The solver.
    type(elisha_mesh_object),       intent(inout)                      :: mesh      !< The mesh (validated if not yet).
    type(elisha_comm_object),       intent(in)                         :: comm      !< Communication context.
@@ -107,24 +110,27 @@ contains
    logical,                        intent(in),           optional     :: isolated  !< Free-space boundaries (James).
    integer(I4P),                   intent(in),           optional     :: bc(2,3)   !< Kinds per face [lo/hi, axis].
    integer(I4P),                   intent(in),           optional     :: root_cells !< Most cells of the root.
-   integer(I4P),                   intent(in),           optional     :: level_operator !< The level operators' form.
+   integer(I4P),                   intent(in),           optional     :: level_operator !< The level operators' form
+                                                                                         !< (default: the stencil).
    type(elisha_spectral_solver_cufft_object)                          :: cufft_mold !< The cuFFT root, by default.
    integer(I4P)                                                       :: code      !< Status of the placement.
+   integer(I4P)                                                       :: lop       !< The level operators' form.
 
    ! through the parent component the passed object is an elisha_hierarchical_solver_object: its destroy and
    ! work_place are the host's (no-ops), so the device copies of a previous setup are released here first and the new
    ! ones placed after
    call self%destroy
+   lop = ELISHA_OPERATOR_STENCIL ; if (present(level_operator)) lop = level_operator
    if (present(coarse)) then
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=coarse, isolated=isolated, bc=bc, root_cells=root_cells, &
-                                                        level_operator=level_operator)
+                                                        level_operator=lop)
    else
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=cufft_mold, isolated=isolated, bc=bc,             &
-                                                        root_cells=root_cells, level_operator=level_operator)
+                                                        root_cells=root_cells, level_operator=lop)
    endif
    if (stat /= ELISHA_OK) return
    call self%work_place(attach=.true., stat=code)

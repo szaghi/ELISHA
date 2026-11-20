@@ -58,7 +58,8 @@ endtype elisha_hash_table
 
 contains
    pure function elisha_bkey(c4) result(key)
-   !< Key of a block or cell: (i, j, k, level) packed in 19 + 19 + 19 + 7 bits.
+   !< Key of a block or cell: (i, j, k, level) packed in 19 + 19 + 19 bits and the level above them (6 bits below the
+   !< int64 sign: see the module; ADAM's comment says 7).
    integer(I4P), intent(in) :: c4(4) !< Coordinates (i, j, k, level).
    integer(I8P)             :: key   !< Key.
 

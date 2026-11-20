@@ -6,8 +6,8 @@ the device code unchanged: the same kernels, loop mappings, clauses, data direct
 (`-Minfo=accel` reports the same 9 + 10 kernels, line for line). One M7 change is in the smoother's kernel: the colour
 it tests is an integer instead of ADAM's real (audit C3), so it selects the same rows. A second M7 change (audit C5) is in
 the cuFFT backend: it places the eigenvalue parts and the transpose's row maps on the device once, with the plans,
-where ADAM copied them in at every solve. The arithmetic is unchanged. The opt-in stencil level operators
-([the hierarchical solver](./hierarchical-solver#stencil-level-operators)) run on the device as well, as one kernel
+where ADAM copied them in at every solve. The arithmetic is unchanged. The stencil level operators
+([the hierarchical solver](./hierarchical-solver#stencil-level-operators)), this backend's default, run on the device, as one kernel
 per apply and per smoothing colour: block-interior rows as the stencil, the other rows from CSR.
 
 ```fortran
@@ -105,13 +105,14 @@ After M7 (2026-11-20, np 1). The FFT rows come from job 1368967 and the multigri
 | Multigrid AMR isolated | 491 520 | 0.649 / 0.680 |
 | Multigrid AMR periodic | 3 932 160 | 0.959 / 0.952 (0.33 s against ADAM's 0.35 s) |
 | Multigrid AMR isolated | 3 932 160 | 0.902 / 0.939 |
-| Multigrid AMR periodic, stencil (opt-in) | 491 520 | 0.768 / 0.766 (job 1369037) |
-| Multigrid AMR isolated, stencil (opt-in) | 491 520 | 0.631 / 0.634 (job 1369037) |
-| Multigrid AMR periodic, stencil (opt-in) | 3 932 160 | 0.826 / 0.828 (0.28 / 0.29 s against ADAM's 0.34 s; job 1369037) |
-| Multigrid AMR isolated, stencil (opt-in) | 3 932 160 | 0.811 / 0.816 (job 1369037) |
+| Multigrid AMR periodic, stencil (default) | 491 520 | 0.768 / 0.766 (job 1369037) |
+| Multigrid AMR isolated, stencil (default) | 491 520 | 0.631 / 0.634 (job 1369037) |
+| Multigrid AMR periodic, stencil (default) | 3 932 160 | 0.826 / 0.828 (0.28 / 0.29 s against ADAM's 0.34 s; job 1369037) |
+| Multigrid AMR isolated, stencil (default) | 3 932 160 | 0.811 / 0.816 (job 1369037) |
 
-The multigrid gain comes from the V-cycle root, which now stays on the device. The opt-in stencil level operators
-(`level_operator=ELISHA_OPERATOR_STENCIL`) take another 10 to 15% off and are still bitwise ADAM FNL's. [Performance](./performance) has each
+The multigrid gain comes from the V-cycle root, which now stays on the device. The stencil level operators, this
+backend's default since 2026-11-20 (`level_operator=ELISHA_OPERATOR_CSR` selects ADAM's loops), take another 10 to
+15% off and are still bitwise ADAM FNL's. [Performance](./performance) has each
 M7 change with its own measurement.
 
 M5, before M7 (history):

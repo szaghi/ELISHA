@@ -37,7 +37,7 @@ caller already did, so it knows the leaf levels over every rank, then chooses th
 | `tolerance` | Relative max-norm residual of the FCG (default 1e-10; the source's round-off floor when larger) | hierarchical |
 | `max_iterations` | FCG iterations at most (default 200) | hierarchical |
 | `root_cells` | The root of the V-cycle at most this many cells (default: the root solver's) | hierarchical |
-| `level_operator` | `ELISHA_OPERATOR_CSR` (default) or `ELISHA_OPERATOR_STENCIL`: the V-cycle's level operators from their CSR entries, or their block-interior rows as a matrix-free stencil ([the hierarchical solver](./hierarchical-solver#stencil-level-operators)); `ELISHA_ERR_ARGUMENT` otherwise | hierarchical |
+| `level_operator` | `ELISHA_OPERATOR_CSR` (the host's default) or `ELISHA_OPERATOR_STENCIL` (the OpenACC backend's default): the V-cycle's level operators from their CSR entries, or their block-interior rows as a matrix-free stencil ([the hierarchical solver](./hierarchical-solver#stencil-level-operators)); `ELISHA_ERR_ARGUMENT` otherwise | hierarchical |
 | `spectral_mold` | The spectral solver's type, and on the hierarchical path the type of its root (default: the host FFTW solver) | both |
 | `hierarchical_mold` | The hierarchical solver's type (default: the host one) | hierarchical |
 

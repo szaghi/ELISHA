@@ -433,8 +433,8 @@ contains
    !< round. Without it, every bounded axis takes ghost-Dirichlet faces. `root_cells` (#84 E5c): the levels inside the
    !< blocks below lmin stop once the root has at most this many cells (default: the root solver's `root_cells_max` for
    !< the root's transform growth; tests force the levels with a small one, the bench measures others).
-   !< `level_operator` (M7, audit C2): `ELISHA_OPERATOR_CSR` (default) or `ELISHA_OPERATOR_STENCIL` (the block-interior
-   !< rows of the level operators as a stencil; bitwise the same results), else `ELISHA_ERR_ARGUMENT`.
+   !< `level_operator` (M7, audit C2): `ELISHA_OPERATOR_CSR` (this host solver's default) or `ELISHA_OPERATOR_STENCIL` (the
+   !< block-interior rows of the level operators as a stencil; the OpenACC backend's default), else `ELISHA_ERR_ARGUMENT`.
    class(elisha_hierarchical_solver_object), intent(inout)        :: self      !< The solver.
    type(elisha_mesh_object),       intent(inout)                  :: mesh      !< The mesh (validated here if not yet).
    type(elisha_comm_object),       intent(in)                     :: comm      !< Communication context (initialised).

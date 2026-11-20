@@ -15,7 +15,7 @@ program elisha_test_device_api_mpi
 !< ghost-Dirichlet AMR (the root extended odd about the ghost centres), Dirichlet/Neumann AMR with boundary values (the
 !< root extended over 2n and 4n cells), isolated AMR (the James step); spectral uniform periodic and D/N; and the facade
 !< (`elisha_solver_object` with both device molds) on an AMR and a uniform mesh, D against E only. And the stencil level
-!< operators on the device (M7, audit C2, `level_operator=ELISHA_OPERATOR_STENCIL`) against CSR, AMR periodic and D/N
+!< operators on the device (M7, audit C2; the backend's default since 2026-11-20) against CSR (set explicitly), AMR periodic and D/N
 !< with boundary values: the potential and the energy within `TOL_STENCIL` relative, the iterations within one (printed:
 !< whether bitwise, and the difference). Rank 0 prints one
 !< line per case and `elisha_test_device_api_mpi: ok` or `FAILED`. Built only in `tests-nvf-oac`; each rank takes the
@@ -25,7 +25,7 @@ use, intrinsic :: iso_fortran_env, only : int64
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use openacc
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
-                   ELISHA_OPERATOR_STENCIL, &
+                   ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, &
                    elisha_comm_object, elisha_mesh_object, elisha_solver_object, elisha_diagnostics_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
@@ -347,7 +347,7 @@ contains
    call make_mesh(nblk0, dx0, .true., refine, periodic, grid, field, mesh, buf, nb)
    allocate(pe(1-NG:N3(1)+NG,1-NG:N3(2)+NG,1-NG:N3(3)+NG,1:max(nb,1)))
    allocate(ps, mold=pe) ; pe = 0._R_P ; ps = 0._R_P
-   call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
+   call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, level_operator=ELISHA_OPERATOR_CSR)
    if (stat == ELISHA_OK) call s%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, &
                                        level_operator=ELISHA_OPERATOR_STENCIL)
    if (stat /= ELISHA_OK) then

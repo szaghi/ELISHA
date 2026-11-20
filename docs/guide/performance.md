@@ -43,7 +43,7 @@ binary. This page collects those measurements. The solver pages keep their own t
 | 06 | Neighbour halo exchange (B1) | yes | WSL up to 16 ranks: no change; A30 np 1, 2: no change | kept: the cost per call now grows with neighbours, not with P; the gain needs large P |
 | 07 | Resident cuFFT constants (C5) | yes | A30 np 1: FFT isolated 128^3 0.86 / 0.94, others within noise | kept |
 | 08 | Device V-cycle root, `on_device` API (C4) | yes | A30 np 1: AMR 491 520 cells periodic 0.84 / 0.81, isolated 0.65 / 0.68; 3.9 M cells 0.90 to 0.96 | kept: the largest gain of M7 |
-| 09 | Stencil level operators, opt-in (C2) | A30, gfortran, ifx: yes; nvfortran host: round-off | WSL: no change; A30 np 1: multigrid E/A 10 to 15% lower than CSR (job 1369037) | opt-in; the default (CSR) is the owner's choice |
+| 09 | Stencil level operators (C2): OpenACC default, host option | A30, gfortran, ifx: yes; nvfortran host: round-off | WSL: no change; A30 np 1: multigrid E/A 10 to 15% lower than CSR (job 1369037) | default on OpenACC, option on the host (owner, 2026-11-20) |
 
 The ratios are AE / EA unless a range is given.
 
@@ -118,12 +118,12 @@ is a large share of the V-cycle: the 491 520-cell cases, and the isolated ones, 
 `on_device` saves the client its own copies, not the per-solve transfers: the right-hand side and the ghost fill stay
 on the host to keep their summation order.
 
-## Step 09: stencil level operators (audit C2, opt-in)
+## Step 09: stencil level operators (audit C2)
 
 `setup(..., level_operator=ELISHA_OPERATOR_STENCIL)` applies and smooths the block-interior rows of the V-cycle's level
 operators as the 7-point stencil they are, without reading their CSR entries. That is 42% of the rows on blocks of
-8^3 cells. The other rows keep CSR ([the hierarchical solver](./hierarchical-solver#stencil-level-operators)). The
-default is CSR.
+8^3 cells. The other rows keep CSR ([the hierarchical solver](./hierarchical-solver#stencil-level-operators)). It is
+the OpenACC backend's default; on the host the default is CSR.
 
 | | CSR | Stencil |
 |-|-----|---------|
@@ -148,7 +148,8 @@ Job 1369037 ran CSR and the stencil interleaved in one job, 15 repetitions, both
 - **On the A30**, the device is limited by memory bandwidth, and the stencil gains 10 to 15% on the multigrid solve.
   It is 3 to 4% on the isolated 491 520-cell case, where the James step's two solves and the root weigh more.
 - **On the host** it shows no gain beyond the noise.
-- **Verdict.** It stays opt-in. Making it the default is the owner's decision.
+- **Verdict.** The OpenACC backend's default (owner, 2026-11-20): faster there and still bitwise ADAM FNL's. On the
+  host CSR stays the default; the stencil is an option.
 
 ## Where the time goes now
 
@@ -160,10 +161,10 @@ Job 1369037 ran CSR and the stencil interleaved in one job, 15 repetitions, both
 | AMR isolated, 491 520 cells | | 0.65 / 0.68 (step 08) |
 | AMR periodic, 3 932 160 cells | 0.33 s (step 08; ADAM 0.35 s) | 0.96 / 0.95 (step 08) |
 | AMR isolated, 3 932 160 cells | | 0.90 / 0.94 (step 08) |
-| AMR periodic, 3 932 160 cells, stencil (opt-in) | 0.28 / 0.29 s (step 09; ADAM 0.34 s) | 0.83 / 0.83 (step 09) |
-| AMR isolated, 3 932 160 cells, stencil (opt-in) | 0.51 / 0.50 s (step 09; ADAM 0.61 s) | 0.81 / 0.82 (step 09) |
-| AMR periodic, 491 520 cells, stencil (opt-in) | | 0.77 / 0.77 (step 09) |
-| AMR isolated, 491 520 cells, stencil (opt-in) | | 0.63 / 0.63 (step 09) |
+| AMR periodic, 3 932 160 cells, stencil (OpenACC default) | 0.28 / 0.29 s (step 09; ADAM 0.34 s) | 0.83 / 0.83 (step 09) |
+| AMR isolated, 3 932 160 cells, stencil (OpenACC default) | 0.51 / 0.50 s (step 09; ADAM 0.61 s) | 0.81 / 0.82 (step 09) |
+| AMR periodic, 491 520 cells, stencil (OpenACC default) | | 0.77 / 0.77 (step 09) |
+| AMR isolated, 491 520 cells, stencil (OpenACC default) | | 0.63 / 0.63 (step 09) |
 
 On the host, after M7, ELISHA's solve stays within the noise of ADAM's. The tables of the
 [spectral](./spectral-solver#performance) and [hierarchical](./hierarchical-solver#performance) solvers hold. ELISHA's

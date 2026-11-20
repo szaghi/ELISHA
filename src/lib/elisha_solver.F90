@@ -202,8 +202,9 @@ contains
    !< wide D(G), spectral path only (`ELISHA_ERR_DG_AMR` on the hierarchical one). `tolerance`, `max_iterations`,
    !< `root_cells`: the hierarchical solver's controls (ignored on the spectral path). `spectral_mold`: the spectral
    !< solver's type (and the hierarchical root's); `hierarchical_mold`: the hierarchical solver's; without them, the host
-   !< solvers. `level_operator` (M7, audit C2): the hierarchical solver's level operators, `ELISHA_OPERATOR_CSR` (default)
-   !< or `ELISHA_OPERATOR_STENCIL` (bitwise the same results; ignored on the spectral path). On failure the facade is left
+   !< solvers. `level_operator` (M7, audit C2): the hierarchical solver's level operators, `ELISHA_OPERATOR_CSR` or
+   !< `ELISHA_OPERATOR_STENCIL`; without it, each backend's default (CSR on the host, the stencil on OpenACC; ignored on
+   !< the spectral path). On failure the facade is left
    !< not set up (`path()` 0).
    class(elisha_solver_object),                     intent(inout)         :: self      !< The solver.
    type(elisha_mesh_object),                        intent(inout)         :: mesh      !< The mesh (validated here if

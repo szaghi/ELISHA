@@ -24,8 +24,9 @@ module elisha_parameters
 !< `ELISHA_PATH_SPECTRAL`, `ELISHA_PATH_HIERARCHICAL`.
 !<
 !< The hierarchical solver's level operators (`setup(..., level_operator)`, M7, audit C2): `ELISHA_OPERATOR_CSR` (the
-!< default, ADAM's) applies and smooths every row from its CSR entries; `ELISHA_OPERATOR_STENCIL` applies the rows of
-!< the cells inside a block (the constant-coefficient 7-point stencil) without reading their entries, the others by CSR.
+!< host solver's default, ADAM's) applies and smooths every row from its CSR entries; `ELISHA_OPERATOR_STENCIL` applies the rows of
+!< the cells inside a block (the constant-coefficient 7-point stencil) without reading their entries, the others by CSR
+!< (the OpenACC backend's default).
 use penf, only : I4P
 implicit none
 private
