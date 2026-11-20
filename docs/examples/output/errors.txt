@@ -1,0 +1,7 @@
+$ errors
+stat 33: ELISHA_ERR_NOT_INITIALIZED (the solver is used before its setup)
+  ELISHA_ERR_NOT_INITIALIZED: elisha_solver_object%solve_packed: called before setup
+stat 9: ELISHA_ERR_MESH_LEVELS (the blocks sit at more than one level where one is needed (the spectral solver))
+  ELISHA_ERR_MESH_LEVELS: elisha_solver_object%setup: path spectral needs a uniform mesh (the leaves sit at levels 0 to 1): use ELISHA_PATH_AUTO or ELISHA_PATH_HIERARCHICAL
+path after the refusal: 0
+ok

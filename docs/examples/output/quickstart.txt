@@ -1,0 +1,4 @@
+$ quickstart
+spectral path T, iterations 0
+residual below 1e-12 of the source: T
+max |phi - phi_exact| / max |phi_exact|: 1.30E-02
