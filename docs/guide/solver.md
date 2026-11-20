@@ -11,7 +11,7 @@ the path is an argument, a backend is a mold, and what clients read from the sol
 | Procedure | Role |
 |-----------|------|
 | `setup(mesh, comm, stat, errmsg[, path][, isolated][, bc][, dg_order][, tolerance][, max_iterations][, root_cells][, spectral_mold][, hierarchical_mold])` | Choose the path for the mesh and set up its solver; called on the initial mesh and after every regrid |
-| `solve_packed(mesh, buf, factor, phi, stat, errmsg[, energy][, ghost])` | Solve for `phi` from the packed interior source; every ghost layer of `phi` is filled |
+| `solve_packed(mesh, buf, factor, phi, stat, errmsg[, energy][, ghost][, on_device])` | Solve for `phi` from the packed interior source; every ghost layer of `phi` is filled |
 | `diagnostics()` | An `elisha_diagnostics_object`: the path, iterations, residual, tolerance, CG flag, wall times |
 | `path()`, `is_hierarchical()` | The path in use (`ELISHA_PATH_SPECTRAL`, `ELISHA_PATH_HIERARCHICAL`; 0 before setup) |
 | `boundary_faces(kinds, dir, x, stat, errmsg)` | This rank's boundary faces, in the order `solve_packed(..., ghost)` takes their values (hierarchical path) |
@@ -55,7 +55,9 @@ or no Dirichlet face) or `L_h phi = factor f`:
 - `energy` is `sum_cells f phi dV` on every rank, on both paths. The spectral solver's own energy is `sum_cells f phi`,
   and the facade multiplies it by the cell volume, as ADAM's facade did;
 - `ghost` holds the value of each boundary face (`boundary_faces`), on the hierarchical path only. The spectral path
-  solves the homogeneous problem.
+  solves the homogeneous problem;
+- `on_device=.true.`: `buf` and `phi` are present on the device (OpenACC), for a device backend (the molds). The
+  result is bitwise the one from host arrays ([The device backends](./device#the-root-on-the-device-and-device-resident-arrays-m7-audit-c4)).
 
 The call is collective. The mesh must be the setup's: a regrid needs a new setup (`ELISHA_ERR_MESH_CHANGED`).
 
@@ -94,7 +96,7 @@ mesh](./errors-comm-mesh#status-a-code-and-a-message-never-a-stop)), the facade 
 | Code | Condition |
 |------|-----------|
 | `ELISHA_ERR_NOT_INITIALIZED` | The communication context is not initialised; `solve_packed` or `boundary_faces` before a setup, or after a failed one |
-| `ELISHA_ERR_ARGUMENT` | `path` is not one of the three |
+| `ELISHA_ERR_ARGUMENT` | `path` is not one of the three; `on_device=.true.` with a host solver (no device mold) |
 | `ELISHA_ERR_ISOLATED_BC` | `isolated` together with `bc` |
 | `ELISHA_ERR_DG_ORDER` | `dg_order` is not 0, 2, 4, 6 or 8 |
 | `ELISHA_ERR_MESH_LEVELS` | `ELISHA_PATH_SPECTRAL` on a mesh at more than one level |

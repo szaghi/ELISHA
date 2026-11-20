@@ -26,6 +26,13 @@ module elisha_hierarchical_solver_oac
 !<   (`xsend`, `xhalo`, audit C1) are allocated and unused here (the device ones, `dsb`, `dhb`, were ADAM's already);
 !<   the red-black colour assertion is the host assembly's, which this backend inherits (the parallel colour sweep
 !<   relies on it);
+!< - one M7 change (audit C4): the V-cycle's root stays on the device when the root solver can (`root_solve`: the
+!<   cuFFT solver on its redundant path, `has_device_redundant`): `e = L^-1 (r / V)` with the division a device kernel
+!<   (the same IEEE division, `r / v0`, per cell) into the level temporary `lt1(lbot)`, free at that point of the
+!<   V-cycle, and `solve_redundant_device` writing `le(lbot)` on the device; ADAM (and the host fallback, any other
+!<   root) went through the host at every V-cycle. And `solve_packed(on_device)` (`stage_source`,
+!<   `stage_potential`): the device source copied to a host copy, `phi` to the host and back, around the host-side
+!<   right-hand side and ghost fill, which stay on the host (their sums and products in the host's order);
 !< - one M7 change (audit C3): the colour is the host's integer (`ivec`, 0 or 1), placed by `place_i` and compared as
 !<   such in `sweep_dev`; ADAM's was a real compared through `nint`. It selects rows only, so no result changes, and
 !<   the kernel reads 4 bytes per row for it instead of 8.
@@ -74,6 +81,9 @@ type, extends(elisha_hierarchical_solver_object) :: elisha_hierarchical_solver_o
       procedure, nopass     :: vec_permute => vec_permute_oac !< y(iy) = x(ix) on the device.
       procedure, nopass     :: vec_update  => vec_update_oac  !< A work vector to or from the device.
       procedure, pass(self) :: work_place  => work_place_oac  !< The operators and work vectors to or from the device.
+      procedure, pass(self) :: root_solve  => root_solve_oac  !< The V-cycle's root on the device (M7, audit C4).
+      procedure, pass(self) :: stage_source    => stage_source_oac    !< solve_packed(on_device): the source.
+      procedure, pass(self) :: stage_potential => stage_potential_oac !< solve_packed(on_device): phi.
 endtype elisha_hierarchical_solver_oac_object
 
 contains
@@ -295,7 +305,86 @@ contains
    self%on_device = attach
    endsubroutine work_place_oac
 
+   subroutine root_solve_oac(self, n, nc, v0, stat, errmsg)
+   !< The V-cycle's root on the device when the root solver can (the cuFFT solver on its redundant path): the source
+   !< `lr(lbot) / v0` into `lt1(lbot)` by a device kernel, the solve into `le(lbot)`, on the device; otherwise the host
+   !< path (`elisha_hierarchical_solver_object%root_solve`, ADAM's).
+   class(elisha_hierarchical_solver_oac_object), intent(inout)         :: self   !< The solver.
+   integer(I4P),                                 intent(in)            :: n      !< Root blocks of this rank.
+   integer(I4P),                                 intent(in)            :: nc     !< Root cells of this rank.
+   real(R_P),                                    intent(in)            :: v0     !< Root cell volume.
+   integer(I4P),                                 intent(out)           :: stat   !< Status.
+   character(:), allocatable,                    intent(out), optional :: errmsg !< Message.
+
+   if (.not.self%fft%has_device_redundant()) then ! the host trip, as the parent's hook (not called through the parent
+      ! component: its hooks would dispatch to the host's)
+      call self%vec_update(self%lr(self%lbot)%v, to_device=.false.)
+      self%root_buf = 0._R_P
+      if (nc > 0) self%root_buf(1:nc) = self%lr(self%lbot)%v(1:nc) / v0
+      call self%fft%solve_blocks(nbl=n, coords=self%root_coords, buf=self%root_buf, factor=1._R_P, gw=0_I4P, &
+                                 out=self%root_out, stat=stat, errmsg=errmsg)
+      if (stat /= ELISHA_OK) return
+      if (nc > 0) self%le(self%lbot)%v(1:nc) = self%root_out(1:nc)
+      call self%vec_update(self%le(self%lbot)%v, to_device=.true.)
+      return
+   endif
+   if (nc > 0) call divide_dev(nc, size(self%lr(self%lbot)%v), self%lr(self%lbot)%v, v0, &
+                               size(self%lt1(self%lbot)%v), self%lt1(self%lbot)%v)
+   call self%fft%solve_redundant_device(nbl=n, coords=self%root_coords, nb=size(self%lt1(self%lbot)%v),              &
+                                        buf=self%lt1(self%lbot)%v, nout=size(self%le(self%lbot)%v),                    &
+                                        out=self%le(self%lbot)%v, factor=1._R_P, stat=stat, errmsg=errmsg)
+   endsubroutine root_solve_oac
+
+   subroutine stage_source_oac(self, buf, bufh, stat)
+   !< `solve_packed(on_device)`: the device source copied, on the device, into a host array's device copy, then to the
+   !< host (the client's `buf`, `intent(in)`, is not touched on either side).
+   class(elisha_hierarchical_solver_oac_object), intent(inout) :: self    !< The solver.
+   real(R_P),                                    intent(in)    :: buf(1:) !< Source (present).
+   real(R_P), allocatable,                       intent(out)   :: bufh(:) !< Its host copy.
+   integer(I4P),                                 intent(out)   :: stat    !< Status.
+   integer(I4P)                                                :: i       !< Counter.
+
+   if (.false.) stat = self%nr
+   allocate(bufh(size(buf)))
+   !$acc enter data create(bufh)
+   !$acc parallel loop present(buf, bufh)
+   do i=1, size(buf)
+      bufh(i) = buf(i)
+   enddo
+   !$acc update self(bufh)
+   !$acc exit data delete(bufh)
+   stat = ELISHA_OK
+   endsubroutine stage_source_oac
+
+   subroutine stage_potential_oac(self, phi, to_host)
+   !< `solve_packed(on_device)`: phi (present, contiguous) from the device to the host (`to_host`) or back.
+   class(elisha_hierarchical_solver_oac_object), intent(inout) :: self         !< The solver.
+   real(R_P),                                    intent(inout) :: phi(:,:,:,:) !< Potential (present).
+   logical,                                      intent(in)    :: to_host      !< Direction.
+
+   if (.false.) phi(1,1,1,1) = real(self%nr, R_P)
+   if (to_host) then
+      !$acc update self(phi)
+   else
+      !$acc update device(phi)
+   endif
+   endsubroutine stage_potential_oac
+
    ! private procedures
+   subroutine divide_dev(n, nx, x, v0, ny, y)
+   !< y(1:n) = x(1:n) / v0 on the device (the root's source, as the host path's `lr / v0`).
+   integer(I4P), intent(in)    :: n, nx, ny !< Count, sizes.
+   real(R_P),    intent(in)    :: x(nx)     !< Level residual (present).
+   real(R_P),    intent(in)    :: v0        !< Root cell volume.
+   real(R_P),    intent(inout) :: y(ny)     !< Root source (present).
+   integer(I4P)                :: i         !< Counter.
+
+   !$acc parallel loop present(x, y)
+   do i=1, n
+      y(i) = x(i) / v0
+   enddo
+   endsubroutine divide_dev
+
    subroutine halo_dev(self, m, x, stat)
    !< The halo of x for operator m into self%dhb: x(sidx) packed into self%dsb, exchanged on the device buffers.
    class(elisha_hierarchical_solver_oac_object), intent(inout) :: self  !< The solver.

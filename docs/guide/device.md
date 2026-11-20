@@ -23,6 +23,44 @@ call mg%solve_packed(mesh, buf, factor, phi, stat, errmsg)
 The right-hand side, the root (through the host to the cuFFT solver), the James step and the ghost fill's placement
 stay on the host, as in ADAM.
 
+## The root on the device and device-resident arrays (M7, audit C4)
+
+**The V-cycle's root.** ADAM's device multigrid takes its root through the host at every V-cycle: the level residual
+goes down, the root is gathered, placed and extended on the host, cuFFT transforms it, and the correction goes back
+up. With the cuFFT root on its redundant path (at most 32^3 cells, the default), ELISHA keeps the whole root on the
+device:
+
+1. the division `r / v0` runs as a device kernel;
+2. the source is gathered on device buffers, `MPI_ALLGATHERV` through `host_data` (GPU-aware), or copied on the device
+   at one rank;
+3. it is placed into the global array and extended (the plane reflections);
+4. cuFFT runs with the same plans and the same call as before;
+5. this rank's blocks are extracted.
+
+Steps 2, 3 and 5 are copies and sign products, and the division is IEEE `div.rn.f64` on the device, so the potential
+stays bitwise ADAM FNL's. The root's layout and its global array are placed on the device once, at the first V-cycle
+after a setup. A root above the cap, on the slab path, and any non-cuFFT root keep the host trip.
+
+**Device-resident arrays.** `solve_packed(..., on_device=.true.)` takes `buf` and `phi` already present on the device
+(OpenACC, `phi` contiguous). It works on the device backends and through the facade with the device molds:
+
+```fortran
+!$acc enter data copyin(buf) create(phi)
+call solver%solve_packed(mesh, buf, factor, phi, stat, errmsg, on_device=.true.)
+! phi is current on the device (and on the host)
+```
+
+The right-hand side (its sums) and the ghost fill stay on the host, in the host's order, which keeps the results
+bitwise. The backend therefore copies the source to a host copy of its own (the client's `buf` is not touched) and
+brings `phi` to the host and back around the solve. The option saves the client its host mirror and its own copies,
+not the per-solve transfers: the gain is the root's, at every V-cycle. A host solver given `on_device=.true.` returns
+`ELISHA_ERR_ARGUMENT`.
+
+`src/tests/device/elisha_test_device_api_mpi` solves each case three ways: ADAM FNL, ELISHA with host arrays, and
+ELISHA with `on_device`. The cases are hierarchical (periodic, ghost-Dirichlet and D/N roots, isolated), spectral, and
+the facade with the device molds. It compares the bit patterns of the potential, the energy, the iterations and the
+residual.
+
 ## Build
 
 | Mode | Content |

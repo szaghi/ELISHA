@@ -120,7 +120,7 @@ use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC
                               ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_PATH_SPECTRAL
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_NO_FFT, ELISHA_ERR_FFT_PLAN, ELISHA_ERR_MESH_LEVELS,           &
                           ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE,              &
-                          ELISHA_ERR_ENERGY_REDUNDANT, elisha_set_error
+                          ELISHA_ERR_ENERGY_REDUNDANT, ELISHA_ERR_ARGUMENT, elisha_set_error
 use elisha_setup_checks, only : elisha_check_bc, elisha_check_dg_order, elisha_check_isolated, elisha_check_path, &
                                 elisha_check_periodicity, elisha_check_reach, elisha_check_unbounded
 use elisha_spectral, only : elisha_axis_eigenvalue, elisha_axis_transform_size, elisha_dg_stencil
@@ -205,7 +205,7 @@ type :: elisha_spectral_solver_object
       ! public methods
       procedure, pass(self) :: destroy    !< Destroy the solver.
       procedure, pass(self) :: setup      !< Check the mesh and the arguments, size the solver, make the plans.
-      procedure, pass(self) :: solve_packed !< Solve for phi from the packed interior source.
+      procedure, pass(self) :: solve_packed !< Solve for phi from the packed interior source (host or device arrays).
       procedure, pass(self) :: initialize_blocks !< Size the solver from block counts and spacing (no mesh).
       procedure, pass(self) :: solve_blocks      !< Solve from an explicit list of blocks (coordinates and source).
       ! private methods
@@ -219,6 +219,7 @@ type :: elisha_spectral_solver_object
       procedure, pass(self), private :: subtract_free_ghosts !< Rank 0: f <- f - D(G) u_g (E3c).
       procedure, pass(self), private :: put_free_ghosts      !< Rank 0: the free-space ghost slabs into a padded array.
       procedure, pass(self), private :: solve_everywhere     !< `solve_blocks` with `redundant`: every rank solves.
+      procedure, pass(self), private :: solve_packed_host    !< `solve_packed` on host arrays.
       procedure, pass(self), private :: slab_setup           !< The slab layout, maps, arrays and plans (E5d).
       procedure, pass(self), private :: solve_slabs          !< `solve_blocks` with `slab`: the distributed solve.
       procedure, pass(self), private :: slab_transform       !< slab_r <- factor * L^-1 slab_r, distributed.
@@ -237,6 +238,10 @@ type :: elisha_spectral_solver_object
       procedure, pass(self) :: slab_spectral      !< pen <- the spectral solve (eigenvalues or kernel) of pen.
       procedure, pass(self) :: slab_keep_kernel   !< khat_pen <- pen over prod(m) (isolated, at setup).
       procedure, pass(self) :: slab_update        !< slab_r between the host and where the stages run.
+      procedure, pass(self) :: has_device_redundant   !< The redundant solve can run on device arrays (M7, C4).
+      procedure, pass(self) :: solve_redundant_device !< `solve_everywhere` on device arrays (M7, C4).
+      procedure, pass(self) :: stage_source    !< `solve_packed(on_device)`: the device source to a host copy (C4).
+      procedure, pass(self) :: stage_potential !< `solve_packed(on_device)`: phi between the device and the host.
 endtype elisha_spectral_solver_object
 
 #ifdef _FFTW
@@ -658,7 +663,42 @@ contains
       endfunction zero_class
    endsubroutine initialize_blocks
 
-   subroutine solve_packed(self, mesh, buf, factor, phi, stat, errmsg, energy)
+   subroutine solve_packed(self, mesh, buf, factor, phi, stat, errmsg, energy, on_device)
+   !< Solve from the packed interior source (see `solve_packed_host`). `on_device` (M7, audit C4): `buf` and `phi` are
+   !< present on the device (OpenACC), a device backend's arrays: the source is staged to a host copy
+   !< (`stage_source`), `phi` to the host and back (`stage_potential`; contiguous), around the host solve, so the result
+   !< is bitwise the one from host arrays. This host solver has no device arrays: `on_device=.true.` returns
+   !< `ELISHA_ERR_ARGUMENT` (an argument every rank passes alike, refused before any collective).
+   class(elisha_spectral_solver_object), intent(inout)         :: self   !< The solver.
+   type(elisha_mesh_object),             intent(in)            :: mesh   !< The mesh (this rank's block coordinates).
+   real(R_P),                            intent(in)            :: buf(1:) !< Packed interior source of this rank.
+   real(R_P),                            intent(in)            :: factor !< Source factor (4 pi G for gravity).
+   real(R_P),    intent(inout) :: phi(1-self%ngc:,1-self%ngc:,1-self%ngc:,1:) !< Potential [i,j,k,nb].
+   integer(I4P),                         intent(out)           :: stat   !< Status.
+   character(:), allocatable,            intent(out), optional :: errmsg !< Message.
+   real(R_P),                            intent(out), optional :: energy !< sum_cells f phi (all ranks).
+   logical,                              intent(in),  optional :: on_device !< buf and phi on the device (default: host).
+   real(R_P), allocatable :: bufh(:) !< The host copy of a device source.
+   logical                :: dev     !< on_device.
+   integer(I4P)           :: code    !< Status of the staging.
+
+   dev = .false. ; if (present(on_device)) dev = on_device
+   if (.not.dev) then
+      call self%solve_packed_host(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy)
+      return
+   endif
+   call self%stage_source(buf, bufh, code)
+   if (code /= ELISHA_OK) then
+      call elisha_set_error(stat, errmsg, code, 'elisha_spectral_solver_object%solve_packed: on_device needs a '// &
+                            'device backend (the host solver has no device arrays)')
+      return
+   endif
+   call self%stage_potential(phi, to_host=.true.)
+   call self%solve_packed_host(mesh=mesh, buf=bufh, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy)
+   if (stat == ELISHA_OK) call self%stage_potential(phi, to_host=.false.)
+   endsubroutine solve_packed
+
+   subroutine solve_packed_host(self, mesh, buf, factor, phi, stat, errmsg, energy)
    !< Solve `L_h phi = factor (f - mean(f))` (periodic) or `L_h phi = factor f` (isolated) from the packed interior
    !< source of this rank's blocks (block-major, `i` fastest, `mesh%nb * ni * nj * nk` values); every ghost layer of phi
    !< is filled from the global solution (the periodic wrap, or the padded free-space solution). Collective: the
@@ -715,7 +755,7 @@ contains
          enddo
       enddo
    enddo
-   endsubroutine solve_packed
+   endsubroutine solve_packed_host
 
    subroutine solve_blocks(self, nbl, coords, buf, factor, gw, out, stat, errmsg, energy)
    !< The solve on an explicit list of this rank's blocks: their integer coordinates at the solver's level and their
@@ -1362,6 +1402,56 @@ contains
                          'built without an FFT library (build with -D_FFTW and link fftw3)')
 #endif
    endsubroutine make_plans
+
+   pure function has_device_redundant(self) result(yes)
+   !< True when `solve_redundant_device` solves on device arrays (a device backend, the redundant path); here never.
+   class(elisha_spectral_solver_object), intent(in) :: self !< The solver.
+   logical                                          :: yes  !< The device path exists.
+
+   yes = .false. .and. self%redundant
+   endfunction has_device_redundant
+
+   subroutine solve_redundant_device(self, nbl, coords, nb, buf, nout, out, factor, stat, errmsg)
+   !< `solve_everywhere` (gw = 0) on device-resident `buf` and `out` (M7, audit C4: the hierarchical solver's root on
+   !< the device). The host solver has none: `ELISHA_ERR_ARGUMENT` (a device backend overrides it; the caller asks
+   !< `has_device_redundant` first).
+   class(elisha_spectral_solver_object), intent(inout)         :: self          !< The solver.
+   integer(I4P),                         intent(in)            :: nbl           !< Blocks of this rank.
+   integer(I4P),                         intent(in)            :: coords(1:,1:) !< Block coordinates [3,nbl].
+   integer(I4P),                         intent(in)            :: nb            !< Size of buf.
+   real(R_P),                            intent(in)            :: buf(nb)       !< Packed source (on the device).
+   integer(I4P),                         intent(in)            :: nout          !< Size of out.
+   real(R_P),                            intent(inout)         :: out(nout)     !< Packed potential (on the device).
+   real(R_P),                            intent(in)            :: factor        !< Source factor.
+   integer(I4P),                         intent(out)           :: stat          !< Status.
+   character(:), allocatable,            intent(out), optional :: errmsg        !< Message.
+
+   if (.false.) out(1) = buf(1) * factor + nbl + coords(1,1)
+   call elisha_set_error(stat, errmsg, ELISHA_ERR_ARGUMENT, 'elisha_spectral_solver_object%solve_redundant_device: '// &
+                         'the host solver has no device arrays')
+   endsubroutine solve_redundant_device
+
+   subroutine stage_source(self, buf, bufh, stat)
+   !< `solve_packed(on_device)`: a host copy of the device source. The host solver has no device arrays:
+   !< `ELISHA_ERR_ARGUMENT` (a device backend overrides it).
+   class(elisha_spectral_solver_object), intent(inout) :: self    !< The solver.
+   real(R_P),                            intent(in)    :: buf(1:) !< Source (on the device).
+   real(R_P), allocatable,               intent(out)   :: bufh(:) !< Its host copy.
+   integer(I4P),                         intent(out)   :: stat    !< Status.
+
+   if (.false.) bufh = buf ! the host solver: unused
+   stat = ELISHA_ERR_ARGUMENT
+   endsubroutine stage_source
+
+   subroutine stage_potential(self, phi, to_host)
+   !< `solve_packed(on_device)`: phi from the device to the host (`to_host`) or back. Nothing here (the host solver
+   !< refuses `on_device` in `stage_source`).
+   class(elisha_spectral_solver_object), intent(inout) :: self         !< The solver.
+   real(R_P),                            intent(inout) :: phi(:,:,:,:) !< Potential (contiguous).
+   logical,                              intent(in)    :: to_host      !< Direction.
+
+   if (.false.) phi(1,1,1,1) = merge(1._R_P, 0._R_P, to_host)
+   endsubroutine stage_potential
 
    subroutine extend_global(self)
    !< Rank 0: the source extended over the m cells of every extended axis (cell index t = 0..m-1, array index t + 1),

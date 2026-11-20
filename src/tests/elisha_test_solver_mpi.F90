@@ -22,7 +22,8 @@ program elisha_test_solver_mpi
 !< (`ELISHA_ERR_MESH_LEVELS`), boundary values on the spectral path (`ELISHA_ERR_GHOST_VALUES`), `boundary_faces` on it
 !< (the same), isolated with `bc` (`ELISHA_ERR_ISOLATED_BC`), an unknown path (`ELISHA_ERR_ARGUMENT`), the wide D(G) on
 !< the hierarchical path (`ELISHA_ERR_DG_AMR`), a context not initialised, a solve and `boundary_faces` before the setup
-!< and after a failed one (`ELISHA_ERR_NOT_INITIALIZED`, `path()` 0). The FP traps of a debug build are off around
+!< and after a failed one (`ELISHA_ERR_NOT_INITIALIZED`, `path()` 0), `on_device` on the host solvers of both paths
+!< (`ELISHA_ERR_ARGUMENT`). The FP traps of a debug build are off around
 !< `MPI_Init` only (hwloc raises IEEE flags inside it).
 #ifndef ELISHA_NO_MPI
 use mpi
@@ -345,6 +346,19 @@ contains
       call expect(stat, ELISHA_ERR_GHOST_VALUES, 'boundary values on the spectral path')
       call facade%boundary_faces(kinds, dir, x, stat, msg)
       call expect(stat, ELISHA_ERR_GHOST_VALUES, 'boundary_faces on the spectral path')
+      call facade%solve_packed(uni, buf, FACTOR, phi, stat, msg, on_device=.true.)
+      call expect(stat, ELISHA_ERR_ARGUMENT, 'on_device on the host spectral solver')
+   endif
+   ! on_device on the host hierarchical solver
+   call facade%setup(amr, c, stat, msg)
+   call expect(stat, ELISHA_OK, 'AMR setup')
+   if (stat == ELISHA_OK) then
+      deallocate(buf, phi)
+      allocate(buf(max(amr%nb*product(NIJK),1)))
+      allocate(phi(1-NGHOST:NIJK(1)+NGHOST,1-NGHOST:NIJK(2)+NGHOST,1-NGHOST:NIJK(3)+NGHOST,1:max(amr%nb,1)))
+      buf = 1._R_P ; phi = 0._R_P
+      call facade%solve_packed(amr, buf, FACTOR, phi, stat, msg, on_device=.true.)
+      call expect(stat, ELISHA_ERR_ARGUMENT, 'on_device on the host hierarchical solver')
    endif
    call facade%destroy
    call uni%destroy

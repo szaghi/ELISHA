@@ -147,7 +147,7 @@ use elisha_keys, only : elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_ta
 use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
                               ELISHA_BC_ZERO_GHOSTS, ELISHA_PATH_HIERARCHICAL
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_INTERNAL, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE, &
-                          ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_GHOST_VALUES, elisha_set_error
+                          ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_GHOST_VALUES, ELISHA_ERR_ARGUMENT, elisha_set_error
 use elisha_setup_checks, only : elisha_check_bc, elisha_check_ghost_count, elisha_check_isolated, &
                                 elisha_check_isolated_mesh, elisha_check_path, elisha_check_periodicity, &
                                 elisha_check_unbounded
@@ -294,7 +294,7 @@ type :: elisha_hierarchical_solver_object
       ! public methods
       procedure, pass(self) :: destroy         !< Destroy the solver.
       procedure, pass(self) :: setup           !< Check the mesh and the arguments, assemble the operators.
-      procedure, pass(self) :: solve_packed    !< Solve for phi from the packed interior source.
+      procedure, pass(self) :: solve_packed    !< Solve for phi from the packed interior source (host or device arrays).
       procedure, pass(self) :: symmetry_defect !< |x . A y - y . A x| / (|x| |A y|) (verification).
       procedure, pass(self) :: apply_a        !< y = A x on the leaves (verification).
       procedure, pass(self) :: apply_b        !< y = B g: the boundary values onto the boundary rows.
@@ -311,6 +311,9 @@ type :: elisha_hierarchical_solver_object
       procedure, nopass     :: vec_permute !< y(iy(i)) = x(ix(i)).
       procedure, nopass     :: vec_update  !< A work vector between the host and where the hooks compute.
       procedure, pass(self) :: work_place  !< Put (or release) the operators and work vectors where the hooks compute.
+      procedure, pass(self) :: root_solve  !< The V-cycle's root: e = L^-1 (r / V) by the spectral solver (M7, C4).
+      procedure, pass(self) :: stage_source    !< `solve_packed(on_device)`: the device source to a host copy (M7, C4).
+      procedure, pass(self) :: stage_potential !< `solve_packed(on_device)`: phi between the device and the host.
       ! private methods
       procedure, pass(self), private :: assemble    !< Finish a distributed operator from triplets.
       procedure, pass(self), private :: a_row       !< The row of the composite operator at a cell.
@@ -321,6 +324,7 @@ type :: elisha_hierarchical_solver_object
       procedure, pass(self), private :: face_weight !< V-weighted face weight (area over distance) at a level.
       procedure, pass(self), private :: ghost_green !< Isolated: g = -G s, the ghost-to-ghost Green's function.
       procedure, pass(self), private :: solve_fcg   !< The FCG solve with given ghost values (or none).
+      procedure, pass(self), private :: solve_packed_host !< `solve_packed` on host arrays.
       procedure, pass(self), private :: lin         !< Linear index of a cell in a leaf block.
       procedure, pass(self), private :: make_work   !< Allocate the work vectors and the level maps.
       procedure, pass(self), private :: lin_of      !< Linear index of a cell in a block at a level.
@@ -934,7 +938,46 @@ contains
       endsubroutine check_colours
    endsubroutine setup
 
-   subroutine solve_packed(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
+   subroutine solve_packed(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost, on_device)
+   !< Solve from the packed interior source of this rank's leaves (block-major, `i` fastest); then the ghost fill (see
+   !< `solve_packed_host`). `on_device` (M7, audit C4): `buf` and `phi` are present on the device (OpenACC), a device
+   !< backend's arrays: the source is staged to a host copy (`stage_source`), `phi` to the host and back
+   !< (`stage_potential`; contiguous), around the host solve, so the result is bitwise the one from host arrays. This
+   !< host solver has no device arrays: `on_device=.true.` returns `ELISHA_ERR_ARGUMENT` (an argument every rank
+   !< passes alike, refused before any collective).
+   class(elisha_hierarchical_solver_object), intent(inout) :: self    !< The solver.
+   type(elisha_mesh_object),       intent(in)            :: mesh    !< The mesh (this rank's blocks).
+   real(R_P),                      intent(in)            :: buf(1:) !< Packed interior source.
+   real(R_P),                      intent(in)            :: factor  !< Source factor.
+   real(R_P),    intent(inout) :: phi(1-self%ngc:,1-self%ngc:,1-self%ngc:,1:) !< Potential [i,j,k,nb].
+   integer(I4P),                   intent(out)           :: stat    !< Status.
+   character(:), allocatable,      intent(out), optional :: errmsg  !< Message.
+   real(R_P),                      intent(out), optional :: energy  !< sum_cells V f phi (all ranks).
+   real(R_P),                      intent(in),  optional :: ghost(1:) !< The boundary value per boundary face.
+   logical,                        intent(in),  optional :: on_device !< buf and phi on the device (default: host).
+   real(R_P), allocatable :: bufh(:) !< The host copy of a device source.
+   logical                :: dev     !< on_device.
+   integer(I4P)           :: code    !< Status of the staging.
+
+   dev = .false. ; if (present(on_device)) dev = on_device
+   if (.not.dev) then
+      call self%solve_packed_host(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, &
+                                  energy=energy, ghost=ghost)
+      return
+   endif
+   call self%stage_source(buf, bufh, code)
+   if (code /= ELISHA_OK) then
+      call elisha_set_error(stat, errmsg, code, 'elisha_hierarchical_solver_object%solve_packed: on_device needs a '// &
+                            'device backend (the host solver has no device arrays)')
+      return
+   endif
+   call self%stage_potential(phi, to_host=.true.)
+   call self%solve_packed_host(mesh=mesh, buf=bufh, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy, &
+                               ghost=ghost)
+   if (stat == ELISHA_OK) call self%stage_potential(phi, to_host=.false.)
+   endsubroutine solve_packed
+
+   subroutine solve_packed_host(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
    !< Solve from the packed interior source of this rank's leaves (block-major, `i` fastest); then the ghost fill.
    !< Isolated (issue #87, P2), the James step: the zero-ghost solve `phi0 = A^-1 factor V f`, the screening charge
    !< `s = B^T phi0` on the ghost cells, the ghost values of the free-space solution `g = -G s` (`ghost_green`), and
@@ -997,7 +1040,7 @@ contains
    call move_alloc(self%u, self%u0) ; call move_alloc(u_, self%u)
    call self%ghost_green(s, g, stat, errmsg) ; if (stat /= ELISHA_OK) return
    call self%solve_fcg(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy, ghost=g)
-   endsubroutine solve_packed
+   endsubroutine solve_packed_host
 
    subroutine solve_fcg(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
    !< Solve from the packed interior source of this rank's leaves (block-major, `i` fastest): FCG on the operator,
@@ -1334,6 +1377,49 @@ contains
       y(iy(i)) = x(ix(i))
    enddo
    endsubroutine vec_permute
+
+   subroutine root_solve(self, n, nc, v0, stat, errmsg)
+   !< The V-cycle's root (lbot): e = L^-1 (r / V), the spectral solver on its `nc` cells (`n` blocks of this rank), every
+   !< rank (the mean removed), through the host: r down from where the hooks compute, e back up (ADAM's path). A device
+   !< backend overrides it to keep the root on the device (M7, audit C4).
+   class(elisha_hierarchical_solver_object), intent(inout)         :: self   !< The solver.
+   integer(I4P),                             intent(in)            :: n      !< Root blocks of this rank.
+   integer(I4P),                             intent(in)            :: nc     !< Root cells of this rank.
+   real(R_P),                                intent(in)            :: v0     !< Root cell volume.
+   integer(I4P),                             intent(out)           :: stat   !< Status.
+   character(:), allocatable,                intent(out), optional :: errmsg !< Message.
+
+   call self%vec_update(self%lr(self%lbot)%v, to_device=.false.)
+   self%root_buf = 0._R_P
+   if (nc > 0) self%root_buf(1:nc) = self%lr(self%lbot)%v(1:nc) / v0
+   call self%fft%solve_blocks(nbl=n, coords=self%root_coords, buf=self%root_buf, factor=1._R_P, gw=0_I4P, &
+                              out=self%root_out, stat=stat, errmsg=errmsg)
+   if (stat /= ELISHA_OK) return
+   if (nc > 0) self%le(self%lbot)%v(1:nc) = self%root_out(1:nc)
+   call self%vec_update(self%le(self%lbot)%v, to_device=.true.)
+   endsubroutine root_solve
+
+   subroutine stage_source(self, buf, bufh, stat)
+   !< `solve_packed(on_device)`: a host copy of the device source. The host solver has no device arrays:
+   !< `ELISHA_ERR_ARGUMENT` (a device backend overrides it).
+   class(elisha_hierarchical_solver_object), intent(inout) :: self    !< The solver.
+   real(R_P),                                intent(in)    :: buf(1:) !< Source (on the device).
+   real(R_P), allocatable,                   intent(out)   :: bufh(:) !< Its host copy.
+   integer(I4P),                             intent(out)   :: stat    !< Status.
+
+   if (.false.) bufh = buf ! the host solver: unused
+   stat = ELISHA_ERR_ARGUMENT
+   endsubroutine stage_source
+
+   subroutine stage_potential(self, phi, to_host)
+   !< `solve_packed(on_device)`: phi from the device to the host (`to_host`) or back. Nothing here (the host solver
+   !< refuses `on_device` in `stage_source`).
+   class(elisha_hierarchical_solver_object), intent(inout) :: self          !< The solver.
+   real(R_P),                                intent(inout) :: phi(:,:,:,:)  !< Potential (contiguous).
+   logical,                                  intent(in)    :: to_host       !< Direction.
+
+   if (.false.) phi(1,1,1,1) = merge(1._R_P, 0._R_P, to_host)
+   endsubroutine stage_potential
 
    subroutine vec_update(x, to_device)
    !< A work vector to (`to_device`) or from where the hooks compute: nothing on the host.
@@ -1926,14 +2012,7 @@ contains
    n = self%nloc_lev(self%lbot)
    nc = n * self%ncb_of(self%lbot)
    v0 = self%cell_volume(self%lbot)
-   call self%vec_update(self%lr(self%lbot)%v, to_device=.false.)
-   self%root_buf = 0._R_P
-   if (nc > 0) self%root_buf(1:nc) = self%lr(self%lbot)%v(1:nc) / v0
-   call self%fft%solve_blocks(nbl=n, coords=self%root_coords, buf=self%root_buf, factor=1._R_P, gw=0_I4P, &
-                              out=self%root_out, stat=stat, errmsg=errmsg)
-   if (stat /= ELISHA_OK) return
-   if (nc > 0) self%le(self%lbot)%v(1:nc) = self%root_out(1:nc)
-   call self%vec_update(self%le(self%lbot)%v, to_device=.true.)
+   call self%root_solve(n, nc, v0, stat, errmsg) ; if (stat /= ELISHA_OK) return
    ! up
    do lv=self%lbot+1, self%lmax
       n = self%nloc_lev(lv) * self%ncb_of(lv)

@@ -27,7 +27,17 @@ module elisha_spectral_solver_cufft
 !<   released by `destroy_plans`), and the transpose's row ranges `yr` and row owners `yown` (`slab_make_plans`,
 !<   released by `slab_destroy_plans`). The kernels name them `present`; ADAM copied them in at every call
 !<   (`copyin(lam1, lam2, lam3)` in the rank-0 solve and the slab division, `copyin(yr, yown)` in the transpose's pack
-!<   and unpack). A setup after a regrid destroys first, so the copies are never doubled.
+!<   and unpack). A setup after a regrid destroys first, so the copies are never doubled;
+!< - two M7 additions (audit C4), not changing a bit: `solve_redundant_device`, the redundant solve on device arrays
+!<   (the hierarchical solver's V-cycle root, `elisha_hierarchical_solver_oac_object%root_solve`): the gather of the
+!<   source on the device buffers (`MPI_ALLGATHERV` through `host_data`, GPU-aware; a device copy on one rank), the
+!<   placement into `f_global`, the extension (`extend_global`'s plane copies, the same sign products), the transform
+!<   (`spectral_solve_dev`, the same plans and call as `transform`) and the extraction, all device kernels of copies and
+!<   sign products, so the values are the host path's (`solve_everywhere`, ADAM's root through the host). Its layout
+!<   (the gathered block coordinates, the counts) is made once, at the first call after a setup, with `f_global`,
+!<   `f_hat` and the gathered source resident until `destroy_plans`; the host `transform` of the same object then
+!<   updates `f_global` around its solve. And `stage_source`, `stage_potential`: `solve_packed(on_device)`, the device
+!<   source copied (a device kernel) to a host copy, `phi` updated to the host and back around the host solve.
 !< The `R8P` of ADAM is ELISHA's `R_P` (R8P, `elisha_kind_parameters`).
 !<
 !< ADAM's description, unchanged: the gather to rank 0, the placement and the scatter of `phi` with its ghosts are the
@@ -53,7 +63,8 @@ use penf, only : I4P, I8P, str
 use elisha_kind_parameters, only : R_P
 use elisha_comm, only : elisha_comm_object
 use elisha_spectral_solver, only : elisha_spectral_solver_object
-use elisha_status, only : ELISHA_OK, ELISHA_ERR_FFT_PLAN, elisha_set_error
+use elisha_parameters, only : ELISHA_BC_DIRICHLET, ELISHA_BC_DIRICHLET_GHOST
+use elisha_status, only : ELISHA_OK, ELISHA_ERR_FFT_PLAN, ELISHA_ERR_INTERNAL, elisha_set_error
 implicit none
 private
 public :: elisha_spectral_solver_cufft_object
@@ -71,6 +82,15 @@ type, extends(elisha_spectral_solver_object) :: elisha_spectral_solver_cufft_obj
    logical        :: slab_on_device=.false. !< The slab arrays are on the device.
    logical        :: lam_on_device=.false.  !< lam1, lam2, lam3 are on the device (M7, audit C5).
    logical        :: maps_on_device=.false. !< yr, yown are on the device (M7, audit C5).
+   ! the redundant solve on device arrays (M7, audit C4)
+   logical                   :: root_dev_ready=.false. !< The layout is made, f_global, f_hat, rd_buf on the device.
+   integer(I4P)              :: rd_nbl=0_I4P   !< Blocks of this rank.
+   integer(I4P)              :: rd_b0=0_I4P    !< Blocks before this rank's in the gathered order.
+   integer(I4P)              :: rd_bt=0_I4P    !< Blocks over the ranks.
+   integer(I4P), allocatable :: rd_coords(:,:) !< Block coordinates of every rank [3,rd_bt] (device too).
+   integer(I4P), allocatable :: rd_counts(:)   !< Source values per rank [nranks].
+   integer(I4P), allocatable :: rd_displs(:)   !< Their displacements [nranks].
+   real(R_P),    allocatable :: rd_buf(:)      !< The gathered source (device).
    integer(I4P), allocatable :: yown(:)     !< Owner rank of each y-row [0:m(2)-1].
    complex(R_P), allocatable :: t_sb(:)     !< Device: the transpose's send buffer.
    complex(R_P), allocatable :: t_rb(:)     !< Device: the transpose's receive buffer.
@@ -89,6 +109,10 @@ type, extends(elisha_spectral_solver_object) :: elisha_spectral_solver_cufft_obj
       procedure, pass(self) :: slab_spectral      => slab_spectral_cufft      !< The spectral solve on the GPU.
       procedure, pass(self) :: slab_keep_kernel   => slab_keep_kernel_cufft   !< khat_pen on the GPU.
       procedure, pass(self) :: slab_update        => slab_update_cufft        !< slab_r to and from the GPU.
+      procedure, pass(self) :: has_device_redundant   => has_device_redundant_cufft !< The redundant path (M7, C4).
+      procedure, pass(self) :: solve_redundant_device => solve_redundant_device_cufft !< On device arrays (M7, C4).
+      procedure, pass(self) :: stage_source    => stage_source_cufft    !< solve_packed(on_device): the source.
+      procedure, pass(self) :: stage_potential => stage_potential_cufft !< solve_packed(on_device): phi.
 endtype elisha_spectral_solver_cufft_object
 
 contains
@@ -109,6 +133,11 @@ contains
    if (self%lam_on_device) then
       !$acc exit data delete(self%lam1, self%lam2, self%lam3)
    endif
+   if (self%root_dev_ready) then
+      !$acc exit data delete(self%rd_coords, self%rd_buf, self%f_global, self%f_hat)
+      deallocate(self%rd_coords, self%rd_buf, self%rd_counts, self%rd_displs)
+   endif
+   self%root_dev_ready = .false. ; self%rd_nbl = 0_I4P ; self%rd_b0 = 0_I4P ; self%rd_bt = 0_I4P
    self%has_plans = .false.
    self%khat_on_device = .false.
    self%lam_on_device = .false.
@@ -155,6 +184,9 @@ contains
    integer(c_int)                                                    :: ierr   !< cuFFT status.
 
    stat = ELISHA_OK
+   if (self%root_dev_ready) then ! f_global is resident (solve_redundant_device): the host source goes up first
+      !$acc update device(self%f_global)
+   endif
    if (self%isolated) then
       call spectral_convolve_dev(plan_d2z=self%plan_d2z, plan_z2d=self%plan_z2d, m1=self%m(1), m2=self%m(2), &
                                  m3=self%m(3), factor=factor, khat=self%khat, f=self%f_global, f_hat=self%f_hat, &
@@ -165,6 +197,9 @@ contains
                               scale=factor / real(product(self%nt), R_P),                          &
                               lam1=self%lam1, lam2=self%lam2, lam3=self%lam3, f=self%f_global, f_hat=self%f_hat, &
                               ierr=ierr)
+   endif
+   if (self%root_dev_ready) then ! and the potential comes back down
+      !$acc update self(self%f_global)
    endif
    if (ierr /= CUFFT_SUCCESS) call elisha_set_error(stat, errmsg, ELISHA_ERR_FFT_PLAN, &
       'elisha_spectral_solver_cufft_object%transform: a cuFFT transform failed, status '//trim(str(int(ierr, I4P), .true.)))
@@ -408,6 +443,140 @@ contains
       !$acc update self(self%slab_r)
    endif
    endsubroutine slab_update_cufft
+
+   pure function has_device_redundant_cufft(self) result(yes)
+   !< True on the redundant path: `solve_redundant_device` solves on device arrays.
+   class(elisha_spectral_solver_cufft_object), intent(in) :: self !< The solver.
+   logical                                                :: yes  !< The device path exists.
+
+   yes = self%redundant .and. self%has_plans
+   endfunction has_device_redundant_cufft
+
+   subroutine solve_redundant_device_cufft(self, nbl, coords, nb, buf, nout, out, factor, stat, errmsg)
+   !< `solve_everywhere` with gw = 0 on device arrays (see the module): the same values, the same order of every
+   !< operation. Collective. The first call after a setup makes the layout (a host gather of the block coordinates, as
+   !< `solve_everywhere` does at every call) and places `f_global`, `f_hat` and the gathered source on the device.
+   class(elisha_spectral_solver_cufft_object), intent(inout)         :: self          !< The solver.
+   integer(I4P),                               intent(in)            :: nbl           !< Blocks of this rank.
+   integer(I4P),                               intent(in)            :: coords(1:,1:) !< Block coordinates [3,nbl].
+   integer(I4P),                               intent(in)            :: nb            !< Size of buf.
+   real(R_P),                                  intent(in)            :: buf(nb)       !< Packed source (present).
+   integer(I4P),                               intent(in)            :: nout          !< Size of out.
+   real(R_P),                                  intent(inout)         :: out(nout)     !< Packed potential (present).
+   real(R_P),                                  intent(in)            :: factor        !< Source factor.
+   integer(I4P),                               intent(out)           :: stat          !< Status.
+   character(:), allocatable,                  intent(out), optional :: errmsg        !< Message.
+   integer(I4P), allocatable :: counts(:), displs(:) !< Blocks per rank, their displacements.
+   integer(I4P)              :: ncell, nr, r, d, t0 !< Interior cells per block, ranks, counters, plane start.
+   integer(c_int)            :: ierr                !< cuFFT status.
+   integer(I4P)              :: code                !< Status of a collective.
+   real(R_P)                 :: t(0:2)              !< Phase marks (wtime).
+   character(*), parameter   :: HERE='elisha_spectral_solver_cufft_object%solve_redundant_device' !< For the messages.
+
+   stat = ELISHA_OK
+   t(0) = self%comm%wtime()
+   ncell = product(self%nijk)
+   nr    = self%comm%nranks
+   if (.not.self%root_dev_ready) then ! the layout, once per setup (solve_everywhere's gathers of the coordinates)
+      allocate(counts(nr), displs(nr), self%rd_counts(nr), self%rd_displs(nr))
+      call self%comm%allgather_i4(nbl, counts, stat)
+      if (stat /= ELISHA_OK) then
+         code = stat
+         call elisha_set_error(stat, errmsg, code, HERE//': a collective failed')
+         return
+      endif
+      displs(1) = 0
+      do r=2, nr
+         displs(r) = displs(r-1) + counts(r-1)
+      enddo
+      self%rd_bt = sum(counts) ; self%rd_nbl = nbl ; self%rd_b0 = displs(self%comm%rank+1)
+      allocate(self%rd_coords(3,max(self%rd_bt,1)), self%rd_buf(max(self%rd_bt*ncell,1)))
+      self%rd_coords = 0 ; self%rd_buf = 0._R_P
+      call self%comm%allgatherv_layout_i4(coords, 3*nbl, self%rd_coords, 3*counts, 3*displs, stat)
+      if (stat /= ELISHA_OK) then
+         code = stat
+         call elisha_set_error(stat, errmsg, code, HERE//': a collective failed')
+         return
+      endif
+      self%rd_counts = ncell * counts ; self%rd_displs = ncell * displs
+      !$acc enter data copyin(self%rd_coords) create(self%rd_buf, self%f_global, self%f_hat)
+      self%root_dev_ready = .true.
+   elseif (nbl /= self%rd_nbl) then
+      call elisha_set_error(stat, errmsg, ELISHA_ERR_INTERNAL, HERE//': the block list changed after setup')
+      return
+   endif
+   ! the gather of the source, on the device buffers
+   if (nr > 1) then
+      !$acc host_data use_device(buf, self%rd_buf)
+      call self%comm%allgatherv_layout_r(buf, nbl*ncell, self%rd_buf, self%rd_counts, self%rd_displs, stat)
+      !$acc end host_data
+      if (stat /= ELISHA_OK) then
+         code = stat
+         call elisha_set_error(stat, errmsg, code, HERE//': a collective failed')
+         return
+      endif
+   elseif (nbl*ncell > 0) then
+      call copy_dev(nbl*ncell, nb, buf, size(self%rd_buf), self%rd_buf)
+   endif
+   t(1) = self%comm%wtime()
+   ! the placement, the extension, the transform (transform's call), the extraction
+   if (self%extended) call fill_global_dev(self%m(1), self%m(2), self%m(3), self%f_global, 0._R_P)
+   if (self%rd_bt > 0) call place_root_dev(self%rd_bt, self%nijk(1), self%nijk(2), self%nijk(3), self%m(1), self%m(2), &
+                                           self%m(3), self%rd_coords, size(self%rd_buf), self%rd_buf, self%f_global)
+   if (self%extended) then ! extend_global's order: the axes in turn, each in one or two passes of independent planes
+      do d=1, 3
+         if (self%m(d) == self%n(d)) cycle
+         if (all(self%bc(:,d) == ELISHA_BC_DIRICHLET_GHOST)) then
+            call extend_planes_dev(self%m(1), self%m(2), self%m(3), self%f_global, d, self%n(d), self%m(d)-1, &
+                                   0_I4P, self%n(d), 0._R_P)
+         else
+            t0 = min(2*self%n(d), self%m(d))
+            call extend_planes_dev(self%m(1), self%m(2), self%m(3), self%f_global, d, self%n(d), t0-1, 1_I4P, &
+                                   self%n(d), merge(-1._R_P, 1._R_P, self%bc(2,d) == ELISHA_BC_DIRICHLET))
+            if (t0 < self%m(d)) &
+               call extend_planes_dev(self%m(1), self%m(2), self%m(3), self%f_global, d, t0, self%m(d)-1, 2_I4P, &
+                                      self%n(d), merge(-1._R_P, 1._R_P, self%bc(1,d) == ELISHA_BC_DIRICHLET))
+         endif
+      enddo
+   endif
+   call spectral_solve_dev(plan_d2z=self%plan_d2z, plan_z2d=self%plan_z2d,                     &
+                           n1=self%nt(1), n2=self%nt(2), n3=self%nt(3),                         &
+                           scale=factor / real(product(self%nt), R_P),                          &
+                           lam1=self%lam1, lam2=self%lam2, lam3=self%lam3, f=self%f_global, f_hat=self%f_hat, &
+                           ierr=ierr)
+   if (ierr /= CUFFT_SUCCESS) then
+      call elisha_set_error(stat, errmsg, ELISHA_ERR_FFT_PLAN, HERE//': a cuFFT transform failed, status '// &
+                            trim(str(int(ierr, I4P), .true.)))
+      return
+   endif
+   if (nbl > 0) call extract_root_dev(nbl, self%rd_b0, self%rd_bt, self%nijk(1), self%nijk(2), self%nijk(3), &
+                                      self%m(1), self%m(2), self%m(3), self%rd_coords, nout, out, self%f_global)
+   t(2) = self%comm%wtime()
+   self%wall(1:2) = self%wall(1:2) + (t(1:2) - t(0:1))
+   endsubroutine solve_redundant_device_cufft
+
+   subroutine stage_source_cufft(self, buf, bufh, stat)
+   !< `solve_packed(on_device)`: the device source copied, on the device, into a host array's device copy, then to the
+   !< host (the client's `buf`, `intent(in)`, is not touched on either side).
+   class(elisha_spectral_solver_cufft_object), intent(inout) :: self    !< The solver.
+   real(R_P),                                  intent(in)    :: buf(1:) !< Source (present).
+   real(R_P), allocatable,                     intent(out)   :: bufh(:) !< Its host copy.
+   integer(I4P),                               intent(out)   :: stat    !< Status.
+
+   if (.false.) stat = self%comm%rank
+   call stage_from_device(buf, bufh)
+   stat = ELISHA_OK
+   endsubroutine stage_source_cufft
+
+   subroutine stage_potential_cufft(self, phi, to_host)
+   !< `solve_packed(on_device)`: phi (present, contiguous) from the device to the host (`to_host`) or back.
+   class(elisha_spectral_solver_cufft_object), intent(inout) :: self         !< The solver.
+   real(R_P),                                  intent(inout) :: phi(:,:,:,:) !< Potential (present).
+   logical,                                    intent(in)    :: to_host      !< Direction.
+
+   if (.false.) phi(1,1,1,1) = real(self%comm%rank, R_P)
+   call stage_phi(phi, to_host)
+   endsubroutine stage_potential_cufft
 
    ! private procedures
    subroutine place_lam(self)
@@ -705,4 +874,148 @@ contains
    !$acc end host_data
    !$acc end data
    endsubroutine kernel_spectrum_dev
+
+   subroutine copy_dev(n, nx, x, ny, y)
+   !< y(1:n) = x(1:n) on the device.
+   integer(I4P), intent(in)    :: n, nx, ny !< Count, sizes.
+   real(R_P),    intent(in)    :: x(nx)     !< Source (present).
+   real(R_P),    intent(inout) :: y(ny)     !< Target (present).
+   integer(I4P)                :: i         !< Counter.
+
+   !$acc parallel loop present(x, y)
+   do i=1, n
+      y(i) = x(i)
+   enddo
+   endsubroutine copy_dev
+
+   subroutine fill_global_dev(m1, m2, m3, f, a)
+   !< f = a on the device (f_global before the placement of an extended solve, as `solve_everywhere`).
+   integer(I4P), intent(in)    :: m1, m2, m3   !< Sizes.
+   real(R_P),    intent(inout) :: f(m1,m2,m3)  !< Array (present).
+   real(R_P),    intent(in)    :: a            !< Value.
+   integer(I4P)                :: i, j, k      !< Counters.
+
+   !$acc parallel loop collapse(3) present(f)
+   do k=1, m3
+      do j=1, m2
+         do i=1, m1
+            f(i,j,k) = a
+         enddo
+      enddo
+   enddo
+   endsubroutine fill_global_dev
+
+   subroutine place_root_dev(nbt, n1, n2, n3, m1, m2, m3, coords, nb, buf, f)
+   !< The gathered blocks into the global array on the device (`solve_everywhere`'s placement).
+   integer(I4P), intent(in)    :: nbt, n1, n2, n3, m1, m2, m3, nb !< Blocks, cells per block, transform sizes, size.
+   integer(I4P), intent(in)    :: coords(3,nbt)                   !< Block coordinates (present).
+   real(R_P),    intent(in)    :: buf(nb)                         !< Gathered source (present).
+   real(R_P),    intent(inout) :: f(m1,m2,m3)                     !< Global array (present).
+   integer(I4P)                :: b, i, j, k, c                   !< Counters.
+
+   !$acc parallel loop collapse(4) present(coords, buf, f) private(c)
+   do b=1, nbt
+      do k=1, n3
+         do j=1, n2
+            do i=1, n1
+               c = (((b - 1) * n3 + (k - 1)) * n2 + (j - 1)) * n1 + i
+               f(coords(1,b)*n1+i, coords(2,b)*n2+j, coords(3,b)*n3+k) = buf(c)
+            enddo
+         enddo
+      enddo
+   enddo
+   endsubroutine place_root_dev
+
+   subroutine extend_planes_dev(m1, m2, m3, f, d, ta, tb, mode, n, sg)
+   !< Planes ta..tb (0-based) of axis d as `extend_global` sets them (`elisha_set_plane`): mode 0 ghost-Dirichlet (0 at
+   !< t = n and t = m - 1, else -1 times the plane 2 n - t), mode 1 sg times the plane 2 n - 1 - t, mode 2 sg times the
+   !< plane 4 n - 1 - t. The planes of one call read only planes another call wrote (or the interior).
+   integer(I4P), intent(in)    :: m1, m2, m3   !< Sizes.
+   real(R_P),    intent(inout) :: f(m1,m2,m3)  !< Global array (present).
+   integer(I4P), intent(in)    :: d, ta, tb    !< Axis, first and last plane.
+   integer(I4P), intent(in)    :: mode, n      !< Mode, interior cells along d.
+   real(R_P),    intent(in)    :: sg           !< Sign (modes 1, 2).
+   integer(I4P)                :: i, j, k, t, src, mt !< Counters, plane, source plane, cells along d.
+   real(R_P)                   :: s            !< Sign of the plane.
+
+   mt = merge(m1, merge(m2, m3, d == 2), d == 1)
+   !$acc parallel loop collapse(3) present(f) private(t, src, s)
+   do k=merge(ta+1, 1, d == 3), merge(tb+1, m3, d == 3)
+      do j=merge(ta+1, 1, d == 2), merge(tb+1, m2, d == 2)
+         do i=merge(ta+1, 1, d == 1), merge(tb+1, m1, d == 1)
+            t = merge(i, merge(j, k, d == 2), d == 1) - 1
+            if (mode == 0) then
+               if (t == n .or. t == mt-1) then
+                  s = 0._R_P ; src = 0
+               else
+                  s = -1._R_P ; src = 2*n - t
+               endif
+            elseif (mode == 1) then
+               s = sg ; src = 2*n - 1 - t
+            else
+               s = sg ; src = 4*n - 1 - t
+            endif
+            if (s == 0._R_P) then
+               f(i,j,k) = 0._R_P
+            elseif (d == 1) then
+               f(i,j,k) = s * f(src+1,j,k)
+            elseif (d == 2) then
+               f(i,j,k) = s * f(i,src+1,k)
+            else
+               f(i,j,k) = s * f(i,j,src+1)
+            endif
+         enddo
+      enddo
+   enddo
+   endsubroutine extend_planes_dev
+
+   subroutine extract_root_dev(nbl, b0, nbt, n1, n2, n3, m1, m2, m3, coords, nout, out, f)
+   !< This rank's blocks out of the global array on the device (`solve_everywhere`'s extraction, no ghost layer).
+   integer(I4P), intent(in)    :: nbl, b0, nbt, n1, n2, n3, m1, m2, m3, nout !< Blocks, offset, sizes.
+   integer(I4P), intent(in)    :: coords(3,nbt)                             !< Block coordinates (present).
+   real(R_P),    intent(inout) :: out(nout)                                 !< Packed potential (present).
+   real(R_P),    intent(in)    :: f(m1,m2,m3)                               !< Global array (present).
+   integer(I4P)                :: b, i, j, k, c                             !< Counters.
+
+   !$acc parallel loop collapse(4) present(coords, out, f) private(c)
+   do b=1, nbl
+      do k=1, n3
+         do j=1, n2
+            do i=1, n1
+               c = (((b - 1) * n3 + (k - 1)) * n2 + (j - 1)) * n1 + i
+               out(c) = f(modulo(coords(1,b0+b)*n1 + i - 1, m1) + 1, modulo(coords(2,b0+b)*n2 + j - 1, m2) + 1, &
+                          modulo(coords(3,b0+b)*n3 + k - 1, m3) + 1)
+            enddo
+         enddo
+      enddo
+   enddo
+   endsubroutine extract_root_dev
+
+   subroutine stage_from_device(x, xh)
+   !< xh <- a host copy of the device array x (present), through a device copy of its own (x is not updated).
+   real(R_P),              intent(in)  :: x(1:)  !< Device array (present).
+   real(R_P), allocatable, intent(out) :: xh(:)  !< Host copy.
+   integer(I4P)                        :: i      !< Counter.
+
+   allocate(xh(size(x)))
+   !$acc enter data create(xh)
+   !$acc parallel loop present(x, xh)
+   do i=1, size(x)
+      xh(i) = x(i)
+   enddo
+   !$acc update self(xh)
+   !$acc exit data delete(xh)
+   endsubroutine stage_from_device
+
+   subroutine stage_phi(phi, to_host)
+   !< phi (present) to the host (`to_host`) or to the device.
+   real(R_P), intent(inout) :: phi(:,:,:,:) !< Potential (present).
+   logical,   intent(in)    :: to_host      !< Direction.
+
+   if (to_host) then
+      !$acc update self(phi)
+   else
+      !$acc update device(phi)
+   endif
+   endsubroutine stage_phi
 endmodule elisha_spectral_solver_cufft

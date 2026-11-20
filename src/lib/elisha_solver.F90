@@ -298,12 +298,14 @@ contains
    endif
    endsubroutine setup
 
-   subroutine solve_packed(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
+   subroutine solve_packed(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost, on_device)
    !< Solve for phi from the packed interior source of this rank's blocks (block-major, `i` fastest), every ghost layer
    !< of phi filled; optionally the energy `sum_cells f phi dV` (every rank). `ghost`: the value of each of this rank's
    !< boundary faces (`boundary_faces`, of its kind), hierarchical path only (`ELISHA_ERR_GHOST_VALUES` on the spectral
    !< one, which solves the homogeneous problem: an argument every rank passes alike, refused before any collective).
-   !< Collective.
+   !< `on_device` (M7, audit C4): `buf` and `phi` are present on the device (OpenACC; `phi` contiguous), forwarded to the
+   !< solver in use: a device backend (the molds of `setup`) stages them around its solve, bitwise the result from host
+   !< arrays; a host solver returns `ELISHA_ERR_ARGUMENT`. Collective.
    class(elisha_solver_object), intent(inout)         :: self    !< The solver.
    type(elisha_mesh_object),    intent(in)            :: mesh    !< The mesh (this rank's blocks, the setup's).
    real(R_P),                   intent(in)            :: buf(1:) !< Packed interior source.
@@ -313,11 +315,12 @@ contains
    character(:), allocatable,   intent(out), optional :: errmsg  !< Message.
    real(R_P),                   intent(out), optional :: energy  !< sum_cells f phi dV (all ranks).
    real(R_P),                   intent(in),  optional :: ghost(1:) !< Boundary value per boundary face (hierarchical).
+   logical,                     intent(in),  optional :: on_device !< buf and phi on the device (default: host).
 
    select case(self%path_in_use)
    case(ELISHA_PATH_HIERARCHICAL)
       call self%hierarchical%solve_packed(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, &
-                                          energy=energy, ghost=ghost)
+                                          energy=energy, ghost=ghost, on_device=on_device)
    case(ELISHA_PATH_SPECTRAL)
       if (present(ghost)) then
          call elisha_set_error(stat, errmsg, ELISHA_ERR_GHOST_VALUES, 'elisha_solver_object%solve_packed: boundary '// &
@@ -326,7 +329,7 @@ contains
          return
       endif
       call self%spectral%solve_packed(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, &
-                                      energy=energy)
+                                      energy=energy, on_device=on_device)
       if (stat /= ELISHA_OK) return
       if (present(energy)) energy = energy * product(self%spectral%dxyz) ! uniform mesh: one cell volume
    case default
