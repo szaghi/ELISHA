@@ -48,6 +48,10 @@ $STD_INT = -standard-semantics -std18
 # NVIDIA compute capability of the OpenACC modes; override with --varset (e.g. --varset cc90)
 $GPU_CC = cc89
 
+# medooza (CNR-IAC): A30 (cc80); its node drivers cannot run CUDA 13, so CUDA 12.9 (as SETH, SELAH)
+[varset:iac]
+$GPU_CC = cc80,cuda12.9
+
 [varset:cc80]
 $GPU_CC = cc80
 
