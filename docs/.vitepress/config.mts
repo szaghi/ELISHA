@@ -41,6 +41,7 @@ export default withMermaid({
             { text: 'The solver facade', link: '/guide/solver' },
             { text: 'Examples', link: '/guide/examples' },
             { text: "Coming from ADAM's FLAIL", link: '/guide/from-adam' },
+            { text: 'Performance', link: '/guide/performance' },
           ],
         },
         {

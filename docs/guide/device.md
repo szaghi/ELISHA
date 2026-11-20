@@ -94,6 +94,28 @@ products into FMAs.
 `exe-bench-oac/elisha_bench_device_mpi [reps [AE|EA [cases]]]` and `scripts/medooza/elisha-bench.slurm`. These are
 one A30, 15 repetitions, both orders, every row bitwise.
 
+After M7 (2026-11-20, np 1). The FFT rows come from job 1368967 and the multigrid rows from job 1368969:
+
+| Case | Cells | E/A (median), AE / EA |
+|------|-------|-----------------------|
+| FFT periodic | 128^3 | 1.004 / 0.921 |
+| FFT isolated | 128^3 | 0.858 / 0.937 |
+| FFT periodic | 64^3 | 0.959 / 0.984 |
+| Multigrid AMR periodic | 491 520 | 0.835 / 0.806 |
+| Multigrid AMR isolated | 491 520 | 0.649 / 0.680 |
+| Multigrid AMR periodic | 3 932 160 | 0.959 / 0.952 (0.33 s against ADAM's 0.35 s) |
+| Multigrid AMR isolated | 3 932 160 | 0.902 / 0.939 |
+| Multigrid AMR periodic, stencil (opt-in) | 491 520 | 0.768 / 0.766 (job 1369037) |
+| Multigrid AMR isolated, stencil (opt-in) | 491 520 | 0.631 / 0.634 (job 1369037) |
+| Multigrid AMR periodic, stencil (opt-in) | 3 932 160 | 0.826 / 0.828 (0.28 / 0.29 s against ADAM's 0.34 s; job 1369037) |
+| Multigrid AMR isolated, stencil (opt-in) | 3 932 160 | 0.811 / 0.816 (job 1369037) |
+
+The multigrid gain comes from the V-cycle root, which now stays on the device. The opt-in stencil level operators
+(`level_operator=ELISHA_OPERATOR_STENCIL`) take another 10 to 15% off and are still bitwise ADAM FNL's. [Performance](./performance) has each
+M7 change with its own measurement.
+
+M5, before M7 (history):
+
 | Case | Cells | Solve, ELISHA (median) | E/A (median), AE / EA | Setup ADAM / ELISHA |
 |------|-------|------------------------|-----------------------|---------------------|
 | FFT periodic | 128^3 | 0.029 s | 0.99 / 0.99 | 0.04 / 0.04 s |

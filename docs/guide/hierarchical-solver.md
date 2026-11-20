@@ -104,7 +104,8 @@ smoother takes the neighbours only.
 | Compiler | Stencil against CSR |
 |----------|---------------------|
 | gfortran 16.2, ifx 2026.2 | bitwise: operators, smoother, potential, iterations |
-| nvfortran 26.9 (`-fast`) | operators and smoother within 4e-16, potential within 9e-16, the same iterations |
+| nvfortran 26.9 (`-fast`), host | operators and smoother within 4e-16, potential within 9e-16, the same iterations |
+| nvfortran 26.9, A30 (jobs 1369032, 1369037) | bitwise CSR, and bitwise ADAM FNL |
 
 The stencil takes 42% of the rows on blocks of 8^3 cells (6^3 of 8^3); levels with 4 cells per block or fewer have
 few or no interior rows. `elisha_test_stencil_mpi` checks it on uniform, AMR, Dirichlet/Neumann with boundary values,
@@ -118,11 +119,16 @@ Measured on the host (`elisha_bench_hierarchical_mpi ... stencil`; cases (a) AMR
 | gfortran | 0.92 | 0.93 |
 | nvfortran | 0.98 | 0.93 |
 
-The run-to-run noise is about 5%, so the stencil shows no measurable gain on the host. It stays opt-in. The device
-kernels, `spmv_sten_dev` and `sweep_sten_dev`, are where memory bandwidth is the limit, and that measurement is on the
-A30.
+The run-to-run noise is about 5%, so the stencil shows no measurable gain on the host. On the A30, where memory
+bandwidth is the limit (`spmv_sten_dev`, `sweep_sten_dev`), it gains 10 to 15% on the multigrid solve: on the
+3.9 M-cell periodic case, E/A goes from 0.97 / 0.94 with CSR to 0.83 / 0.83 (job 1369037,
+[Performance](./performance#step-09-stencil-level-operators-audit-c2-opt-in)). It stays opt-in; whether it becomes
+the default is the owner's decision.
 
 ## Performance
+
+The M7 changes (integer colour, neighbour halos, the device root, the stencil option) are measured one by one in
+[Performance](./performance). The table below is the port (M4) against ADAM.
 
 `exe-bench/elisha_bench_hierarchical_mpi [reps [AE|EA [cases]]]` (modes `bench-hierarchical-gnu`, `-nvf`) times both
 solvers from zero on a Gaussian on [-1, 1]^3. The AMR cases have 491 520 cells with the central box refined.
