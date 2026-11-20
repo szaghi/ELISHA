@@ -34,6 +34,7 @@ modes = static-gnu shared-gnu
         static-nvf shared-nvf
         static-intel shared-intel
         static-gnu-serial static-nvf-serial
+        static-nvf-oac
         tests-gnu tests-gnu-debug tests-gnu-coverage tests-gnu-serial
         tests-nvf tests-nvf-debug tests-nvf-oac tests-nvf-serial
         tests-intel tests-intel-debug
@@ -108,6 +109,19 @@ template  = template-lib-static template-serial template-nvf template-release
 build_dir = lib/nvf/static-serial/
 output    = libelisha_serial.a
 
+# the device library: the host library plus ELISHA's device backends (src/device/: OpenACC + cuFFT), one
+# libelisha.a whose target is the device entry module `elisha_device` (it uses `elisha`, so the host library is in
+# the archive); the client links cuFFT (-cudalib=cufft) and compiles/links with -acc -gpu=<cc>. The host library modes
+# never see src/device/ (their src is src/lib/); no shared variant yet (OpenACC device code in a shared object is untried)
+[static-nvf-oac]
+help         = Static library with the device backends, nvfortran + MPI (HPC-X), OpenACC + cuFFT, GPU of cc $GPU_CC
+template     = template-lib-static template-nvf template-mpi template-release
+src          = src/lib/ src/device/
+target       = src/device/elisha_device.F90
+preproc      = -D_FFTW -D_CUFFT
+cflags       = -c -acc -gpu=$GPU_CC -cudalib=cufft -Minfo=accel
+build_dir    = lib/nvf/static-oac/
+
 # ── test modes: every program of src/tests into exe/, run by scripts/run_tests.sh ──
 [tests-gnu]
 help      = Tests, gfortran + MPI, optimised (fortran-toolchains matrix: family gnu)
@@ -135,11 +149,13 @@ help      = Tests, nvfortran + MPI (HPC-X), all checks on
 template  = template-tests template-nvf template-mpi template-debug
 
 # the device mode: every test above plus src/tests/device/ (ADAM's OpenACC + cuFFT twins, verbatim, and the device
-# smoke test), the only mode that builds them; cuFFT (-cudalib=cufft, -D_CUFFT: ADAM's FNL FFT guards it so) compiled
-# and linked; its own exclude_dirs (no src/tests/device/) and preproc replace template-base's. Built here, run on a GPU
+# tests) and ELISHA's device backends (src/device/), the only test mode that builds them; cuFFT (-cudalib=cufft,
+# -D_CUFFT: ADAM's FNL FFT guards it so, ELISHA's requires it) compiled and linked; its own src (with src/device/),
+# exclude_dirs (no src/tests/device/) and preproc replace template-tests' and template-base's. Built here, run on a GPU
 [tests-nvf-oac]
 help         = Tests, nvfortran + MPI (HPC-X), OpenACC + cuFFT on the GPU of compute capability $GPU_CC
 template     = template-tests template-nvf template-mpi template-release
+src          = src/lib/ src/device/ src/tests/
 preproc      = -D_FFTW -D_CUFFT
 exclude_dirs = $EXDIRS
 cflags       = -c -acc -gpu=$GPU_CC -cudalib=cufft -Minfo=accel
@@ -180,8 +196,10 @@ help      = Benchmark of the hierarchical solver against ADAM's multigrid, nvfor
 template  = template-bench-hierarchical template-nvf template-mpi template-release
 
 # ── templates: left wins when a mode lists several, so the role template (lib, tests) comes first ──
-# src/tests/device/ (ADAM's device twins, verbatim: OpenACC, cuFFT, GPU-aware MPI; the device smoke test) is out of
-# every mode but tests-nvf-oac: FoBiS scans its src directories recursively, and a host build cannot compile them
+# src/tests/device/ (ADAM's device twins, verbatim: OpenACC, cuFFT, GPU-aware MPI; the device tests) is out of
+# every mode but tests-nvf-oac: FoBiS scans its src directories recursively, and a host build cannot compile them.
+# ELISHA's device backends live in src/device/, a sibling of src/lib/ (fpm compiles src/lib/ recursively): only the
+# *-nvf-oac modes list it in their src
 [template-base]
 preproc         = -D_FFTW
 src             = src/lib/

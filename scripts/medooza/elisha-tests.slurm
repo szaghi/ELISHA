@@ -1,6 +1,6 @@
 #!/bin/bash
 # ELISHA on medooza (CNR-IAC): build test modes on a compute node and run every test program there, the MPI ones at
-# np 1, 2, 3 and the device (tests-nvf-oac) ones on one A30.
+# np 1, 2, 3, the device (tests-nvf-oac) ones on one A30 (shared by the ranks).
 #
 # The source tree is built where it lies (ELISHA_SRC, a sandbox under /home/szaghi) and the programs run from their own
 # run directory on /ifs (ELISHA_RUN, default /ifs/hpc/home/szaghi/elisha-tests/<job id>): nothing but build products is
@@ -55,7 +55,9 @@ for mode in $MODES; do
    for t in "$SRC"/$exe_dir/$GLOB; do
       [ -x "$t" ] && [ -f "$t" ] || continue
       name=$(basename "$t")
-      if [[ $name == *mpi* && $mode != *oac* ]]; then nps="1 2 3"; else nps="1"; fi
+      # MPI programs at np 1, 2, 3, the device ones too: their ranks share the A30, which exercises the GPU-aware
+      # (device-buffer) exchanges of the halos and the slab transpose
+      if [[ $name == *mpi* ]]; then nps="1 2 3"; else nps="1"; fi
       for np in $nps; do
          if srun --mpi=pmix -n "$np" --overlap "$t" > "$name.np$np.log" 2>&1; then
             echo "PASS  $mode $name np $np"
