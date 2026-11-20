@@ -39,6 +39,7 @@ modes = static-gnu shared-gnu
         tests-nvf tests-nvf-debug tests-nvf-oac tests-nvf-serial
         tests-intel tests-intel-debug
         bench-gnu bench-nvf bench-hierarchical-gnu bench-hierarchical-nvf
+        bench-nvf-oac
 
 [common-variables]
 $EXDIRS = PENF/src/tests/ PENF/src/third_party/ PENF/scripts/ PENF/docs/
@@ -195,15 +196,31 @@ template  = template-bench-hierarchical template-gnu template-mpi template-relea
 help      = Benchmark of the hierarchical solver against ADAM's multigrid, nvfortran + MPI (HPC-X), optimised, CPU
 template  = template-bench-hierarchical template-nvf template-mpi template-release
 
+# the device benchmark: ELISHA's device backends against ADAM's device twins (src/tests/device/), cuFFT root; its own
+# exclude_dirs re-include src/tests/device/ and src/bench/device/ (template-base excludes them); its own build
+# directory, as tests-nvf-oac's. Built here, run on a GPU
+[bench-nvf-oac]
+help         = Benchmark of the device backends against ADAM's device twins, nvfortran + MPI (HPC-X), OpenACC + cuFFT
+template     = template-nvf template-mpi template-release
+src          = src/lib/ src/device/ src/tests/ src/bench/device/
+exclude_dirs = $EXDIRS
+target       = src/bench/device/elisha_bench_device_mpi.F90
+output       = elisha_bench_device_mpi
+build_dir    = exe-bench-oac/
+ext_libs     = fftw3
+preproc      = -D_FFTW -D_CUFFT
+cflags       = -c -acc -gpu=$GPU_CC -cudalib=cufft -Minfo=accel
+lflags       = -acc -gpu=$GPU_CC -cudalib=cufft
+
 # ── templates: left wins when a mode lists several, so the role template (lib, tests) comes first ──
 # src/tests/device/ (ADAM's device twins, verbatim: OpenACC, cuFFT, GPU-aware MPI; the device tests) is out of
 # every mode but tests-nvf-oac: FoBiS scans its src directories recursively, and a host build cannot compile them.
 # ELISHA's device backends live in src/device/, a sibling of src/lib/ (fpm compiles src/lib/ recursively): only the
-# *-nvf-oac modes list it in their src
+# *-nvf-oac modes list it in their src. src/bench/device/ (the device benchmark) is out of the host bench modes too
 [template-base]
 preproc         = -D_FFTW
 src             = src/lib/
-exclude_dirs    = $EXDIRS src/tests/device/
+exclude_dirs    = $EXDIRS src/tests/device/ src/bench/device/
 obj_dir         = obj/
 mod_dir         = mod/
 cflags_heritage = True
@@ -291,4 +308,4 @@ rule_1 = cd docs && npm install --no-audit --no-fund && npm run docs:build
 
 [rule-clean]
 help = Remove build products and documentation artefacts
-rule = rm -rf exe/ exe-bench/ exe-oac/ lib/ obj/ mod/ docs/api/ docs/.vitepress/dist/ docs/.vitepress/cache/ docs/public/coverage.json
+rule = rm -rf exe/ exe-bench/ exe-oac/ exe-bench-oac/ lib/ obj/ mod/ docs/api/ docs/.vitepress/dist/ docs/.vitepress/cache/ docs/public/coverage.json
