@@ -19,8 +19,18 @@ module elisha_comm
 !<
 !< The hierarchical solver (ported from ADAM's `adam_poisson_mg_object`) adds the reductions of ADAM's `MPI_REAL8`
 !< scalars (`sum_real8`, `max_real8`: in place, the datatype ADAM reduced with, not `sum_r`'s `MPI_DOUBLE_PRECISION`)
-!< and the exchange of its cell keys (`alltoallv_i8`, `MPI_INTEGER8`); its gathers and halo exchanges are the
-!< spectral solver's.
+!< and the exchange of its cell keys (`alltoallv_i8`, `MPI_INTEGER8`); its gathers are the spectral solver's.
+!<
+!< **Halo plans (M7, audit B1).** The hierarchical solver's halo exchanges (every `apply` and smoothing sweep) go
+!< through `elisha_halo_plan`: built once per operator at setup from the plan's per-rank counts and displacements, it
+!< keeps only the ranks this rank sends to and receives from, on a distributed-graph communicator
+!< (`MPI_Dist_graph_create_adjacent`, those ranks as destinations and sources, no reordering), and exchanges with
+!< `MPI_Neighbor_alltoallv` (`MPI_REAL8`): O(neighbours) counts per call instead of ADAM's `MPI_ALLTOALLV` over P-sized
+!< arrays. The buffers, the displacements into them and so every value received are those of the all-to-all (the
+!< per-neighbour counts and displacements are the P-sized ones with the zero-count ranks dropped), so the results are
+!< bitwise the same. `exchange_r` takes assumed-size buffers, so a device backend passes device addresses
+!< (`host_data use_device`) to a GPU-aware MPI as before. Building and freeing a plan is collective over the context.
+!< Without MPI a plan has at most this rank itself as a neighbour, and the exchange is a copy.
 #ifndef ELISHA_NO_MPI
 use mpi
 #endif
@@ -30,6 +40,7 @@ use elisha_status, only : ELISHA_OK, ELISHA_ERR_MPI, ELISHA_ERR_MPI_NOT_INITIALI
 implicit none
 private
 public :: elisha_comm_object
+public :: elisha_halo_plan
 
 type :: elisha_comm_object
    !< The communication context of a solver.
@@ -64,6 +75,25 @@ type :: elisha_comm_object
       procedure, pass(self) :: alltoallv_i8         !< int64 values to and from every rank (MPI_ALLTOALLV, MPI_INTEGER8).
       procedure, nopass     :: wtime                !< Wall-clock time in seconds (MPI_WTIME; system_clock without MPI).
 endtype elisha_comm_object
+
+type :: elisha_halo_plan
+   !< A sparse exchange of reals among the ranks a plan names (see the module): a distributed-graph communicator and
+   !< the per-neighbour counts and displacements.
+   logical                   :: is_initialized=.false. !< `init` succeeded (the graph communicator exists).
+   integer                   :: comm=-1 !< The graph communicator (MPI handle; -1 without MPI or before init).
+   integer(I4P)              :: nsrc=0  !< Ranks received from.
+   integer(I4P)              :: ndst=0  !< Ranks sent to.
+   integer(I4P), allocatable :: src(:)  !< Ranks received from, ascending [nsrc].
+   integer(I4P), allocatable :: dst(:)  !< Ranks sent to, ascending [ndst].
+   integer(I4P), allocatable :: rc(:)   !< Receive count per source [nsrc].
+   integer(I4P), allocatable :: rd(:)   !< Receive displacement per source [nsrc].
+   integer(I4P), allocatable :: sc(:)   !< Send count per destination [ndst].
+   integer(I4P), allocatable :: sd(:)   !< Send displacement per destination [ndst].
+   contains
+      procedure, pass(self) :: init       => halo_plan_init       !< Build the plan from per-rank counts (collective).
+      procedure, pass(self) :: exchange_r => halo_plan_exchange_r !< Exchange reals with the neighbours.
+      procedure, pass(self) :: destroy    => halo_plan_destroy    !< Free the graph communicator (collective).
+endtype elisha_halo_plan
 
 contains
    subroutine init(self, comm, stat, errmsg)
@@ -533,4 +563,95 @@ contains
    t = real(c, R_P) / real(max(r, 1_I8P), R_P)
 #endif
    endfunction wtime
+
+   ! the halo plans
+   subroutine halo_plan_init(self, comm, sc, sd, rc, rd, stat)
+   !< Build the plan from the per-rank counts and displacements of an all-to-all (indexed 0..nranks-1): the ranks with
+   !< a nonzero count, ascending, their counts and displacements kept; then the graph communicator over `comm`, those
+   !< ranks as sources and destinations, not reordered. Collective over `comm`.
+   class(elisha_halo_plan),   intent(inout) :: self   !< Plan.
+   type(elisha_comm_object),  intent(in)    :: comm   !< Communication context.
+   integer(I4P),              intent(in)    :: sc(0:) !< Send count per rank [nranks].
+   integer(I4P),              intent(in)    :: sd(0:) !< Send displacement per rank [nranks].
+   integer(I4P),              intent(in)    :: rc(0:) !< Receive count per rank [nranks].
+   integer(I4P),              intent(in)    :: rd(0:) !< Receive displacement per rank [nranks].
+   integer(I4P),              intent(out)   :: stat   !< Status.
+   integer(I4P)                             :: r, n   !< Counters.
+#ifndef ELISHA_NO_MPI
+   integer                                  :: ierr   !< MPI error status.
+#endif
+
+   call self%destroy(stat) ; if (stat /= ELISHA_OK) return
+   self%ndst = count(sc > 0) ; self%nsrc = count(rc > 0)
+   allocate(self%dst(self%ndst), self%sc(self%ndst), self%sd(self%ndst))
+   allocate(self%src(self%nsrc), self%rc(self%nsrc), self%rd(self%nsrc))
+   n = 0
+   do r=0, size(sc)-1
+      if (sc(r) == 0) cycle
+      n = n + 1 ; self%dst(n) = r ; self%sc(n) = sc(r) ; self%sd(n) = sd(r)
+   enddo
+   n = 0
+   do r=0, size(rc)-1
+      if (rc(r) == 0) cycle
+      n = n + 1 ; self%src(n) = r ; self%rc(n) = rc(r) ; self%rd(n) = rd(r)
+   enddo
+#ifndef ELISHA_NO_MPI
+   call MPI_DIST_GRAPH_CREATE_ADJACENT(comm%comm, self%nsrc, self%src, MPI_UNWEIGHTED, self%ndst, self%dst, &
+                                       MPI_UNWEIGHTED, MPI_INFO_NULL, .false., self%comm, ierr)
+   stat = merge(ELISHA_OK, ELISHA_ERR_MPI, ierr == MPI_SUCCESS)
+#else
+   self%comm = comm%comm
+   stat = merge(ELISHA_OK, ELISHA_ERR_MPI, all(self%src == comm%rank) .and. all(self%dst == comm%rank))
+#endif
+   self%is_initialized = stat == ELISHA_OK
+   endsubroutine halo_plan_init
+
+   subroutine halo_plan_exchange_r(self, x, y, stat)
+   !< To each destination d x(sd(d)+1:sd(d)+sc(d)), from each source s into y(rd(s)+1:rd(s)+rc(s))
+   !< (MPI_NEIGHBOR_ALLTOALLV, MPI_REAL8); the buffers are assumed-size (device addresses pass through).
+   class(elisha_halo_plan), intent(in)    :: self !< Plan.
+   real(R_P),               intent(in)    :: x(*) !< Values to send.
+   real(R_P),               intent(inout) :: y(*) !< Values received.
+   integer(I4P),            intent(out)   :: stat !< Status.
+#ifndef ELISHA_NO_MPI
+   integer                                :: ierr !< MPI error status.
+
+   if (.not.self%is_initialized) then
+      stat = ELISHA_ERR_MPI
+      return
+   endif
+   call MPI_NEIGHBOR_ALLTOALLV(x, self%sc, self%sd, MPI_REAL8, y, self%rc, self%rd, MPI_REAL8, self%comm, ierr)
+   stat = merge(ELISHA_OK, ELISHA_ERR_MPI, ierr == MPI_SUCCESS)
+#else
+   if (.not.self%is_initialized) then
+      stat = ELISHA_ERR_MPI
+      return
+   endif
+   stat = ELISHA_OK
+   if (self%ndst == 0) return ! one rank: a neighbour can only be itself
+   stat = merge(ELISHA_OK, ELISHA_ERR_MPI, self%sc(1) <= self%rc(1)) ! MPI_ERR_TRUNCATE
+   if (stat == ELISHA_OK) y(self%rd(1)+1:self%rd(1)+self%sc(1)) = x(self%sd(1)+1:self%sd(1)+self%sc(1))
+#endif
+   endsubroutine halo_plan_exchange_r
+
+   subroutine halo_plan_destroy(self, stat)
+   !< Free the graph communicator (collective over the context the plan was built on) and the lists.
+   class(elisha_halo_plan), intent(inout) :: self !< Plan.
+   integer(I4P),            intent(out)   :: stat !< Status.
+#ifndef ELISHA_NO_MPI
+   integer                                :: ierr !< MPI error status.
+#endif
+
+   stat = ELISHA_OK
+#ifndef ELISHA_NO_MPI
+   if (self%is_initialized) then
+      call MPI_COMM_FREE(self%comm, ierr)
+      stat = merge(ELISHA_OK, ELISHA_ERR_MPI, ierr == MPI_SUCCESS)
+   endif
+#endif
+   if (allocated(self%src)) deallocate(self%src, self%rc, self%rd)
+   if (allocated(self%dst)) deallocate(self%dst, self%sc, self%sd)
+   self%nsrc = 0 ; self%ndst = 0 ; self%comm = -1
+   self%is_initialized = .false.
+   endsubroutine halo_plan_destroy
 endmodule elisha_comm

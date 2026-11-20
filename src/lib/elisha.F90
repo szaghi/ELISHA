@@ -36,8 +36,8 @@ public :: ELISHA_ERR_ISOLATED_BC, ELISHA_ERR_ISOLATED_WIDE, ELISHA_ERR_ISOLATED_
 public :: ELISHA_ERR_ISOLATED_CELLS, ELISHA_ERR_ISOLATED_BOUNDARY_LEAF
 public :: ELISHA_ERR_DG_ORDER, ELISHA_ERR_DG_REACH, ELISHA_ERR_DG_AMR, ELISHA_ERR_REDUNDANT, ELISHA_ERR_GHOST_VALUES
 public :: ELISHA_ERR_GHOST_COUNT, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE, ELISHA_ERR_ENERGY_REDUNDANT
-! the communication context (elisha_comm)
-public :: elisha_comm_object
+! the communication context and the halo plans (elisha_comm)
+public :: elisha_comm_object, elisha_halo_plan
 ! cell keys and the hash table (elisha_keys)
 public :: ELISHA_KEY_COORD_LIMIT, ELISHA_KEY_LEVEL_OFFSET, ELISHA_KEY_LEVEL_MAX
 public :: elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_slot, elisha_hash_table

@@ -40,6 +40,12 @@ module elisha_hierarchical_solver
 !< - one M7 change (audit C3), not changing a bit either: the red-black colour of a level cell is an integer (`ivec`,
 !<   0 or 1), compared as such; ADAM stored it as a real and compared `nint` of it. The colour selects rows only and
 !<   enters no arithmetic, and `nint` of the stored 0.0 or 1.0 is that integer exactly.
+!< - one M7 change (audit B1), not changing a bit: every halo exchange of `apply` and `smooth` (host, and the device
+!<   backend's) goes through the operator's `elisha_halo_plan`, `MPI_Neighbor_alltoallv` on a distributed-graph
+!<   communicator of the ranks the plan names, built once at assembly from the plan's per-rank counts and freed by
+!<   `destroy` (collective, as `setup` is); ADAM exchanged with `MPI_ALLTOALLV` over P-sized count arrays at every call.
+!<   The buffers, the displacements and the values received are the all-to-all's; a rank never sends to itself (its
+!<   own columns are local), so a plan has no self edge.
 !< What did not change: every floating-point expression, every loop and its order, every accumulation, the assembly
 !< order of the triplets and the CSR rows, the halo plans, the FCG and V-cycle sequence and the MPI calls, so the
 !< potential, the iterations and the residual are meant to be ADAM's bitwise on every rank count (the tests hold them
@@ -93,7 +99,7 @@ module elisha_hierarchical_solver
 !< shadow blocks and their owners (the owner of the first leaf below, in the gathered order: the same on every rank),
 !< and assembles, from the geometry only, the rows of its own cells: the operator, the ghost fill, the level operators
 !< and transfers. Columns are global cell keys; every operator owns a halo-exchange plan (the remote columns it reads,
-!< fetched from their owners by `alltoallv_r`). Correct for any rank count. Cell keys carry the level offset by
+!< fetched from their owners; ADAM's `MPI_ALLTOALLV`, here an `elisha_halo_plan`, below). Correct for any rank count. Cell keys carry the level offset by
 !< `ELISHA_KEY_LEVEL_OFFSET` (the levels inside the blocks may be negative).
 !<
 !< **Domain boundaries (issue #87, P1; per face, issue #84, E1b).** Every active axis is periodic (both faces) or
@@ -135,7 +141,7 @@ module elisha_hierarchical_solver
 !< `phi_C + (mean_f - phi_C) / 0.75`); deeper ghost layers copy the first.
 use penf, only : I4P, I8P, str
 use elisha_kind_parameters, only : R_P
-use elisha_comm, only : elisha_comm_object
+use elisha_comm, only : elisha_comm_object, elisha_halo_plan
 use elisha_mesh, only : elisha_mesh_object
 use elisha_keys, only : elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_table, ELISHA_KEY_LEVEL_OFFSET
 use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
@@ -172,6 +178,7 @@ type :: dcsr
    integer(I4P), allocatable :: scount(:), sdispl(:)    !< Send counts and displacements per rank.
    integer(I4P), allocatable :: sidx(:)                 !< Local column indices to send.
    integer(I4P), allocatable :: rcount(:), rdispl(:)    !< Receive counts and displacements per rank (halo order).
+   type(elisha_halo_plan)    :: plan                    !< The exchange among the ranks named by the counts (M7, B1).
 endtype dcsr
 
 type :: rvec
@@ -333,6 +340,7 @@ contains
    !< Destroy the solver.
    class(elisha_hierarchical_solver_object), intent(inout) :: self !< The solver.
    integer(I4P)                                           :: st   !< Status of the release (the host's never fails).
+   integer(I4P)                                           :: lv   !< Level.
 
    if (self%is_initialized) call self%work_place(attach=.false., stat=st)
    if (allocated(self%wf))           deallocate(self%wf, self%wr, self%wz, self%wp, self%wq, self%wpp, self%wqp, &
@@ -356,6 +364,14 @@ contains
    if (allocated(self%node_c))       deallocate(self%node_c, self%node_owner, self%node_loc, self%node_leaf)
    if (allocated(self%nloc_lev))     deallocate(self%nloc_lev, self%lev_node)
    if (allocated(self%leaf_lev))     deallocate(self%leaf_lev, self%leaf_lev_loc)
+   ! the halo plans' graph communicators (collective)
+   call self%a%plan%destroy(st) ; call self%g%plan%destroy(st)
+   if (allocated(self%al)) then
+      do lv=lbound(self%al, dim=1), ubound(self%al, dim=1)
+         call self%al(lv)%plan%destroy(st) ; call self%el(lv)%plan%destroy(st)
+         call self%rl(lv)%plan%destroy(st) ; call self%pl(lv)%plan%destroy(st)
+      enddo
+   endif
    if (allocated(self%al))           deallocate(self%al, self%el, self%rl, self%pl, self%diag, self%colour)
    if (allocated(self%vol))          deallocate(self%vol)
    if (allocated(self%g_dst))        deallocate(self%g_dst)
@@ -1216,7 +1232,7 @@ contains
    do i=1, size(m%sidx)
       sbuf(i) = x(m%sidx(i))
    enddo
-   call self%comm%alltoallv_r(sbuf, m%scount, m%sdispl, halo, m%rcount, m%rdispl, stat)
+   call m%plan%exchange_r(sbuf, halo, stat)
    if (stat /= ELISHA_OK) return
    do i=1, m%nrow
       acc = 0._R_P
@@ -1436,6 +1452,11 @@ contains
       m%sidx(i) = lidx
    enddo
    call agree_status(self%comm, stat, errmsg, HERE) ; if (stat /= ELISHA_OK) return
+   ! the neighbour exchange of the plan (M7, audit B1): collective, every rank reaches it
+   call m%plan%init(self%comm, m%scount, m%sdispl, m%rcount, m%rdispl, i)
+   if (i /= ELISHA_OK) call elisha_set_error(stat, errmsg, i, HERE//': the halo plan''s graph communicator')
+   call agree_status(self%comm, stat, errmsg, HERE)
+   if (stat /= ELISHA_OK) return
    ! rows: counting sort of the triplets
    allocate(m%rowptr(nrow+1), m%col(max(t%n,1)), m%val(max(t%n,1)), next(max(nrow,1)))
    m%rowptr = 0
@@ -1851,7 +1872,7 @@ contains
          do i=1, size(m%sidx)
             sbuf(i) = e(m%sidx(i))
          enddo
-         call self%comm%alltoallv_r(sbuf, m%scount, m%sdispl, halo, m%rcount, m%rdispl, stat)
+         call m%plan%exchange_r(sbuf, halo, stat)
          if (stat /= ELISHA_OK) return
          do i=1, m%nrow
             if (self%colour(lv)%v(i) /= colr) cycle

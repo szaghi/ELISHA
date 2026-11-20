@@ -16,9 +16,11 @@ module elisha_hierarchical_solver_oac
 !< - ELISHA's hook interfaces: `apply`, `smooth`, `work_place` return `stat`; `vec_dot` and `vec_relmax` pass `self`
 !<   (the communicator) and return `stat`; their reductions are `elisha_comm_object%sum_real8` and `max_real8`, ADAM's
 !<   `MPI_ALLREDUCE` in place of one `MPI_REAL8` (sum, max), on the solver's communicator instead of `MPI_COMM_WORLD`;
-!< - the halo exchange is `elisha_comm_object%alltoallv_r` (ADAM: `MPI_ALLTOALLV`, `MPI_REAL8`, `MPI_COMM_WORLD`),
-!<   called inside the same `host_data use_device(sb, hb)` region with the same buffers: its dummies are assumed-size,
-!<   so the device addresses pass untouched to `MPI_ALLTOALLV`; ADAM ignored the MPI error code, here it is `stat`;
+!< - the halo exchange is the operator's `elisha_halo_plan%exchange_r` (ADAM: `MPI_ALLTOALLV`, `MPI_REAL8`,
+!<   `MPI_COMM_WORLD`; since M7, audit B1, `MPI_Neighbor_alltoallv` on the plan's graph communicator, the same buffers,
+!<   displacements and values), called inside the same `host_data use_device(sb, hb)` region with the same buffers:
+!<   its dummies are assumed-size, so the device addresses pass untouched to MPI; ADAM ignored the MPI error code, here
+!<   it is `stat`;
 !< - `work_place` before `setup` returns `ELISHA_ERR_NOT_INITIALIZED` (ADAM stopped), as the host hook does;
 !< - ELISHA's host changes stay host-side and change no device arithmetic: the host's persistent halo buffers
 !<   (`xsend`, `xhalo`, audit C1) are allocated and unused here (the device ones, `dsb`, `dhb`, were ADAM's already);
@@ -42,7 +44,7 @@ module elisha_hierarchical_solver_oac
 !< round-off: the dots sum in another order and the device contracts products into FMAs.
 use penf, only : I4P
 use elisha_kind_parameters, only : R_P
-use elisha_comm, only : elisha_comm_object
+use elisha_comm, only : elisha_comm_object, elisha_halo_plan
 use elisha_mesh, only : elisha_mesh_object
 use elisha_spectral_solver, only : elisha_spectral_solver_object
 use elisha_spectral_solver_cufft, only : elisha_spectral_solver_cufft_object
@@ -303,8 +305,7 @@ contains
 
    stat = ELISHA_OK
    if (size(m%sidx) > 0) call pack_dev(size(m%sidx), m%sidx, size(x), x, size(self%dsb), self%dsb)
-   if (self%nr > 1) call alltoallv_dev(self%comm, size(self%dsb), self%dsb, m%scount, m%sdispl, size(self%dhb), &
-                                       self%dhb, m%rcount, m%rdispl, stat)
+   if (self%nr > 1) call exchange_dev(m%plan, size(self%dsb), self%dsb, size(self%dhb), self%dhb, stat)
    endsubroutine halo_dev
 
    subroutine place_csr(m, attach)
@@ -356,21 +357,20 @@ contains
    enddo
    endsubroutine pack_dev
 
-   subroutine alltoallv_dev(comm, ns, sb, sc, sd, nh, hb, rc, rd, stat)
-   !< The exchange of the device buffers (GPU-aware MPI): `elisha_comm_object%alltoallv_r` inside `host_data`, so its
-   !< assumed-size dummies receive the device addresses and pass them to `MPI_ALLTOALLV` (ADAM called `MPI_ALLTOALLV`
-   !< here on `MPI_COMM_WORLD`).
-   type(elisha_comm_object), intent(in)    :: comm                           !< Communication context.
-   integer(I4P),             intent(in)    :: ns, nh                         !< Buffer sizes.
-   real(R_P),                intent(in)    :: sb(ns)                         !< Send buffer (present).
-   integer(I4P),             intent(in)    :: sc(0:), sd(0:), rc(0:), rd(0:) !< Counts and displacements (values).
-   real(R_P),                intent(inout) :: hb(nh)                         !< Receive buffer (present).
-   integer(I4P),             intent(out)   :: stat                           !< Status of the exchange.
+   subroutine exchange_dev(plan, ns, sb, nh, hb, stat)
+   !< The exchange of the device buffers (GPU-aware MPI): the operator's halo plan (`MPI_Neighbor_alltoallv`, M7, audit
+   !< B1) inside `host_data`, so its assumed-size dummies receive the device addresses and pass them to MPI (ADAM called
+   !< `MPI_ALLTOALLV` here on `MPI_COMM_WORLD`).
+   type(elisha_halo_plan), intent(in)    :: plan   !< The operator's halo plan.
+   integer(I4P),           intent(in)    :: ns, nh !< Buffer sizes.
+   real(R_P),              intent(in)    :: sb(ns) !< Send buffer (present).
+   real(R_P),              intent(inout) :: hb(nh) !< Receive buffer (present).
+   integer(I4P),           intent(out)   :: stat   !< Status of the exchange.
 
    !$acc host_data use_device(sb, hb)
-   call comm%alltoallv_r(sb, sc, sd, hb, rc, rd, stat)
+   call plan%exchange_r(sb, hb, stat)
    !$acc end host_data
-   endsubroutine alltoallv_dev
+   endsubroutine exchange_dev
 
    subroutine spmv_dev(nrow, nloc, nnz, nx, ny, nh, rowptr, col, val, x, h, y)
    !< y = M x on the device, one row per thread, the entries in the host's order.
