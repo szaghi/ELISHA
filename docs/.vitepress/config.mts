@@ -36,6 +36,14 @@ export default withMermaid({
           ],
         },
         {
+          text: 'Using ELISHA',
+          items: [
+            { text: 'The solver facade', link: '/guide/solver' },
+            { text: 'Examples', link: '/guide/examples' },
+            { text: "Coming from ADAM's FLAIL", link: '/guide/from-adam' },
+          ],
+        },
+        {
           text: 'Layers',
           items: [
             { text: 'L0: the math', link: '/guide/l0-math' },

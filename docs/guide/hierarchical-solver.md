@@ -35,6 +35,24 @@ call mg%solve_packed(mesh, buf, factor, phi, stat, errmsg, energy=e, ghost=g)
 | Isolated | The James step: a zero-ghost solve, the screening charge, its free-space ghost values by the lattice Green's function, the solve with them |
 | Distribution | CSR rows over global cell keys, one halo plan per operator |
 
+The root follows Athena++ (Tomida and Stone 2023, section 3). ADAM measured what coarsening inside the blocks costs
+(`test_poisson_mg --sub`): 1 to 14 FCG iterations on a uniform box of 1:2:3 cells, from point smoothing on anisotropic
+cells, and 1 to 13 more on AMR. In exchange, no V-cycle gathers the base grid on rank 0.
+
+**Boundary faces.** A bounded face has a kind. Its row stays homogeneous, so the operator stays symmetric, and its
+value `g` goes to the right-hand side through `B`. Here `w` is the face area over the spacing, `h` the spacing and
+`phi_C` the boundary cell's value:
+
+| Kind | `g` | Row | `B` | Ghost |
+|------|-----|-----|-----|-------|
+| `ELISHA_BC_DIRICHLET_GHOST` (default on a bounded axis) | value at the ghost centre | `-w phi_C` | `w` | `g` |
+| `ELISHA_BC_DIRICHLET` | value at the face | `-2 w phi_C` | `2 w` | `2 g - phi_C` |
+| `ELISHA_BC_NEUMANN` | outward derivative at the face | none | `w h` | `phi_C + h g` |
+
+Without a Dirichlet face `A` is singular, and the means of `factor V f - B g` and of the solution are removed. The
+V-cycle's levels take the same kinds, homogeneous. Through the facade, `boundary_faces` lists the faces and `ghost`
+gives their values ([The solver facade](./solver#boundary-values)).
+
 ## What changed from ADAM, and what did not
 
 The plumbing changed as in the spectral solver:

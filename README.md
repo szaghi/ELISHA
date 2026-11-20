@@ -13,6 +13,17 @@ ADAM, as SETH, SELAH and GIDEON were from its other layers, and is distributed o
 (or serial); FFTW on the host, cuFFT and OpenACC on NVIDIA GPUs. Elisha asked for a double portion of his master's
 spirit and took up his mantle (2 Kings 2:9-13): two solvers, one facade, the master's work carried on.
 
+```fortran
+use elisha
+type(elisha_solver_object) :: solver
+call solver%setup(mesh, comm, stat, errmsg)                  ! spectral on one level, hierarchical on 2:1 AMR
+call solver%solve_packed(mesh, f, factor, phi, stat, errmsg) ! L_h phi = factor (f - mean f), ghosts filled
+```
+
+Status: the whole of FLAIL is ported: both solvers, their device backends and the facade. Tests hold each one bitwise
+to ADAM's code: the host solvers and the facade on 1 to 3 ranks with gfortran, nvfortran and ifx, the device backends
+on an A30. Next is performance.
+
 ```bash
 fobis fetch && fobis build --mode tests-gnu && bash scripts/run_tests.sh
 ```

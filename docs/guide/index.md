@@ -16,5 +16,16 @@ that fell from him (2:13): two solvers behind one facade, and the work of the ma
 
 ## Status
 
-The repository is being seeded: the build (MPI and serial, FFTW), the tests and the CI are in place, and the solvers
-are being ported from ADAM's, bitwise first, faster second.
+The port of ADAM's FLAIL is complete. Tests hold the math, the solvers and the facade bitwise to ADAM's own code, and
+reproduce every ADAM refusal as a status code:
+
+- the [L0 math](./l0-math): eigenvalues, extensions, the D(G) stencils, the lattice Green's function;
+- [errors, communicator and mesh](./errors-comm-mesh): a status instead of a stop, the caller's communicator (or the
+  serial build), the mesh descriptor and its collective validation;
+- [the spectral solver](./spectral-solver), [the hierarchical solver](./hierarchical-solver) and [their device
+  backends](./device) (cuFFT, OpenACC);
+- [the solver facade](./solver), `elisha_solver_object`, which chooses the path for the mesh, and its diagnostics.
+
+The [Quick Start](./quickstart) and the [Examples](./examples) are programs that CI compiles and runs.
+[Coming from ADAM's FLAIL](./from-adam) maps a FLAIL client onto ELISHA. Next is performance (M7): neighbour
+collectives, a matrix-free smoother, and a device-resident root and API, each change measured on its own.
