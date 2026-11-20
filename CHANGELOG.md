@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 Versions follow [Semantic Versioning](https://semver.org/).
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.1] — 2026-11-20
+### Fixed
+- **install**: The one-line installer builds the serial library
+
+
+### Performance
+- **device**: The stencil level operators by default on OpenACC
+
+
 ## [0.1.0] — 2026-11-20
 ### Added
 - Scaffold ELISHA, the elliptic solver library for HPC
