@@ -134,11 +134,18 @@ template  = template-tests template-nvf template-mpi template-release
 help      = Tests, nvfortran + MPI (HPC-X), all checks on
 template  = template-tests template-nvf template-mpi template-debug
 
+# the device mode: every test above plus src/tests/device/ (ADAM's OpenACC + cuFFT twins, verbatim, and the device
+# smoke test), the only mode that builds them; cuFFT (-cudalib=cufft, -D_CUFFT: ADAM's FNL FFT guards it so) compiled
+# and linked; its own exclude_dirs (no src/tests/device/) and preproc replace template-base's. Built here, run on a GPU
 [tests-nvf-oac]
-help      = Tests, nvfortran + MPI (HPC-X), OpenACC on the GPU of compute capability $GPU_CC
-template  = template-tests template-nvf template-mpi template-release
-cflags    = -c -acc -gpu=$GPU_CC -Minfo=accel
-lflags    = -acc -gpu=$GPU_CC
+help         = Tests, nvfortran + MPI (HPC-X), OpenACC + cuFFT on the GPU of compute capability $GPU_CC
+template     = template-tests template-nvf template-mpi template-release
+preproc      = -D_FFTW -D_CUFFT
+exclude_dirs = $EXDIRS
+cflags       = -c -acc -gpu=$GPU_CC -cudalib=cufft -Minfo=accel
+lflags       = -acc -gpu=$GPU_CC -cudalib=cufft
+# its own build directory: a device binary left in exe/ would be run by a later host mode's run_tests.sh
+build_dir = exe-oac/
 
 [tests-nvf-serial]
 help      = Tests, nvfortran, serial (no MPI), optimised, CPU
@@ -173,10 +180,12 @@ help      = Benchmark of the hierarchical solver against ADAM's multigrid, nvfor
 template  = template-bench-hierarchical template-nvf template-mpi template-release
 
 # ── templates: left wins when a mode lists several, so the role template (lib, tests) comes first ──
+# src/tests/device/ (ADAM's device twins, verbatim: OpenACC, cuFFT, GPU-aware MPI; the device smoke test) is out of
+# every mode but tests-nvf-oac: FoBiS scans its src directories recursively, and a host build cannot compile them
 [template-base]
 preproc         = -D_FFTW
 src             = src/lib/
-exclude_dirs    = $EXDIRS
+exclude_dirs    = $EXDIRS src/tests/device/
 obj_dir         = obj/
 mod_dir         = mod/
 cflags_heritage = True
@@ -264,4 +273,4 @@ rule_1 = cd docs && npm install --no-audit --no-fund && npm run docs:build
 
 [rule-clean]
 help = Remove build products and documentation artefacts
-rule = rm -rf exe/ exe-bench/ lib/ obj/ mod/ docs/api/ docs/.vitepress/dist/ docs/.vitepress/cache/ docs/public/coverage.json
+rule = rm -rf exe/ exe-bench/ exe-oac/ lib/ obj/ mod/ docs/api/ docs/.vitepress/dist/ docs/.vitepress/cache/ docs/public/coverage.json

@@ -51,7 +51,8 @@ for mode in $MODES; do
       echo "BUILD FAILED $mode: see $RUN/build-$mode.log" | tee -a "$RUN/summary.txt"; status=1; continue
    fi
    mkdir -p "$RUN/$mode" && cd "$RUN/$mode" || exit 1
-   for t in "$SRC"/exe/$GLOB; do
+   exe_dir=exe ; [[ $mode == *oac* ]] && exe_dir=exe-oac # fobos: the device mode builds into exe-oac/
+   for t in "$SRC"/$exe_dir/$GLOB; do
       [ -x "$t" ] && [ -f "$t" ] || continue
       name=$(basename "$t")
       if [[ $name == *mpi* && $mode != *oac* ]]; then nps="1 2 3"; else nps="1"; fi
