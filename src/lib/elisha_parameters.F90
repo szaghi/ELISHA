@@ -1,6 +1,6 @@
 !< ELISHA, the shared parameters: the boundary kinds of a domain face, the solve paths.
 module elisha_parameters
-!< ELISHA, the shared parameters: the boundary kinds of a domain face.
+!< ELISHA, the shared parameters: the boundary kinds of a domain face, the solve paths.
 !<
 !< One kind per face, `bc(2,3)` = [lo/hi, axis], shared by the spectral solver, the hierarchical solver and the facade.
 !< The values are ADAM's `FLAIL_BC_*` (`adam_flail_parameters`), so an adapter passes them through unchanged.
@@ -18,6 +18,10 @@ module elisha_parameters
 !<     preconditioned CG.
 !<   - `ELISHA_BC_FREE_GHOSTS`: every ghost layer holds the continuum free-space potential of the source (PRISM's
 !<     open face), with the wide D(G) only.
+!<
+!< The solve paths (`elisha_solver_object%setup(..., path)`; the values are ADAM's `FLAIL_BACKEND_*`):
+!< `ELISHA_PATH_AUTO` (the spectral solver when every leaf is at one level, the hierarchical one otherwise),
+!< `ELISHA_PATH_SPECTRAL`, `ELISHA_PATH_HIERARCHICAL`.
 use penf, only : I4P
 implicit none
 private
@@ -28,7 +32,7 @@ public :: ELISHA_BC_DIRICHLET_GHOST
 public :: ELISHA_BC_ZERO_GHOSTS
 public :: ELISHA_BC_FREE_GHOSTS
 public :: ELISHA_BC_KINDS
-public :: ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
+public :: ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
 
 integer(I4P), parameter :: ELISHA_BC_PERIODIC        = 0_I4P !< Periodic (both faces of the axis).
 integer(I4P), parameter :: ELISHA_BC_DIRICHLET       = 1_I4P !< Value at the face.
@@ -39,6 +43,7 @@ integer(I4P), parameter :: ELISHA_BC_FREE_GHOSTS     = 5_I4P !< Ghosts: the free
 integer(I4P), parameter :: ELISHA_BC_KINDS(6)=[ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN,      &
                                                ELISHA_BC_DIRICHLET_GHOST, ELISHA_BC_ZERO_GHOSTS,              &
                                                ELISHA_BC_FREE_GHOSTS] !< Every kind, for validation.
+integer(I4P), parameter :: ELISHA_PATH_AUTO         = 0_I4P !< Spectral on a uniform mesh, hierarchical otherwise.
 integer(I4P), parameter :: ELISHA_PATH_SPECTRAL     = 1_I4P !< The spectral (FFT) solver, uniform meshes.
 integer(I4P), parameter :: ELISHA_PATH_HIERARCHICAL = 2_I4P !< The hierarchical (multigrid FCG) solver, any 2:1 mesh.
 endmodule elisha_parameters

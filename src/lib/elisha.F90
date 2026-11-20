@@ -2,10 +2,12 @@
 module elisha
 !< ELISHA, Elliptic Laplacian Inversion: Spectral and Hierarchical Algorithms: the library's entry point.
 !<
-!< Seed of the repository: it re-exports the working kinds, so a client needs `use elisha` only. The elliptic solvers
-!< extracted from ADAM's FLAIL are added behind this module: the spectral (FFT) solver on uniform block lattices and
-!< the hierarchical (multigrid-preconditioned flexible conjugate gradients) solver on 2:1-balanced octrees of blocks,
-!< behind one facade, distributed over a caller-given MPI communicator (or serial, `-DELISHA_NO_MPI`).
+!< It re-exports the whole host library, so a client needs `use elisha` only (and `use elisha_device` for the device
+!< backends, `*-nvf-oac` builds). The elliptic solvers extracted from ADAM's FLAIL: the spectral (FFT) solver on uniform
+!< block lattices and the hierarchical (multigrid-preconditioned flexible conjugate gradients) solver on 2:1-balanced
+!< octrees of blocks, distributed over a caller-given MPI communicator (or serial, `-DELISHA_NO_MPI`), and the facade
+!< over both, `elisha_solver_object` (the path chosen for the mesh, `elisha_diagnostics_object`), the entry point of a
+!< client. The mesh descriptor, the communication context and the status policy are what every call takes.
 use penf, only : I4P, I8P, R8P
 use elisha_kind_parameters
 use elisha_status
@@ -19,6 +21,7 @@ use elisha_extension
 use elisha_lattice_green_library
 use elisha_spectral_solver
 use elisha_hierarchical_solver
+use elisha_solver
 implicit none
 private
 public :: I4P, I8P, R8P, R_P
@@ -42,7 +45,9 @@ public :: elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_slot, elisha_has
 public :: elisha_mesh_object
 ! boundary kinds (elisha_parameters)
 public :: ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST
-public :: ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_BC_KINDS, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
+public :: ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_BC_KINDS
+! solve paths (elisha_parameters)
+public :: ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
 ! the setup checks (elisha_setup_checks)
 public :: elisha_check_bc, elisha_check_dg_order, elisha_check_ghost_count, elisha_check_isolated
 public :: elisha_check_isolated_mesh, elisha_check_path, elisha_check_periodicity, elisha_check_reach
@@ -58,4 +63,6 @@ public :: elisha_spectral_solver_object
 ! the hierarchical (multigrid FCG) solver (elisha_hierarchical_solver): the type, its CSR and vector types (a device
 ! backend extends the hooks on them), the 2:1 seam's ghost constant (FLUME inverts it)
 public :: elisha_hierarchical_solver_object, dcsr, rvec, ivec, MG_SEAM_GHOST_SCALE
+! the facade and its diagnostics (elisha_solver)
+public :: elisha_solver_object, elisha_diagnostics_object
 endmodule elisha
