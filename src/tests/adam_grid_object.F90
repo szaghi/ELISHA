@@ -1,9 +1,10 @@
-!< Test shim: stands in for ADAM's `adam_grid_object`, just enough for the verbatim `adam_poisson_fft_object`.
+!< Test shim: stands in for ADAM's `adam_grid_object`, just enough for the verbatim ADAM Poisson solvers.
 module adam_grid_object
-!< Test shim: stands in for ADAM's `adam_grid_object`, just enough for the verbatim `adam_poisson_fft_object`.
+!< Test shim: stands in for ADAM's `adam_grid_object`, just enough for the verbatim ADAM Poisson solvers.
 !<
-!< Not ADAM's object: a plain container with the members `adam_poisson_fft_object` (ADAM 669d0bdd) reads, and nothing
-!< else. The solver reads, through `grid%`:
+!< Not ADAM's object: a plain container with the members the verbatim solvers of ADAM 669d0bdd read, and nothing else.
+!< `adam_poisson_fft_object` and `adam_poisson_mg_object` both read, through `grid%` (the multigrid only the level-0
+!< entries of the tables, `cell_dxyz(:,0)` and `block_dxyz(:,0)`):
 !< - `ni`, `nj`, `nk`: cells per block per axis;
 !< - `ngc`: ghost layers;
 !< - `cell_dxyz(:,level)`: the cell spacing at a level;
@@ -20,7 +21,7 @@ private
 public :: grid_object
 
 type :: grid_object
-   !< ADAM's grid, the members the FFT solver reads.
+   !< ADAM's grid, the members the Poisson solvers read.
    integer(I4P)           :: ni=1_I4P                 !< Cells per block along x.
    integer(I4P)           :: nj=1_I4P                 !< Cells per block along y.
    integer(I4P)           :: nk=1_I4P                 !< Cells per block along z.

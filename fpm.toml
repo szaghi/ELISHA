@@ -113,3 +113,8 @@ main = "elisha_test_spectral_solver_mpi.F90"
 name = "elisha_test_spectral_parity_mpi"
 source-dir = "src/tests"
 main = "elisha_test_spectral_parity_mpi.F90"
+
+[[test]]
+name = "elisha_test_adam_mg_oracle_mpi"
+source-dir = "src/tests"
+main = "elisha_test_adam_mg_oracle_mpi.F90"

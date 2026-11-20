@@ -1,15 +1,15 @@
-!< Test shim: stands in for ADAM's `adam_mpih_global`, just enough for the verbatim `adam_poisson_fft_object`.
+!< Test shim: stands in for ADAM's `adam_mpih_global`, just enough for the verbatim ADAM Poisson solvers.
 module adam_mpih_global
-!< Test shim: stands in for ADAM's `adam_mpih_global`, just enough for the verbatim `adam_poisson_fft_object`.
+!< Test shim: stands in for ADAM's `adam_mpih_global`, just enough for the verbatim ADAM Poisson solvers.
 !<
-!< Not ADAM's object: the global `mpih` with the members `adam_poisson_fft_object` (ADAM 669d0bdd) reads, and nothing
-!< else. The solver reads, through `mpih%`:
+!< Not ADAM's object: the global `mpih` with the members the verbatim solvers of ADAM 669d0bdd read, and nothing else.
+!< `adam_poisson_fft_object` and `adam_poisson_mg_object` both read, through `mpih%`:
 !< - `myrank`: this rank in `MPI_COMM_WORLD`;
 !< - `myrankstr`: a rank prefix of its warnings;
 !< - `procs_number`: the ranks of `MPI_COMM_WORLD`;
 !< - `error_stop(msg)`: its fatal path (here: print the message and `error stop`; test code, never the library's).
-!< `initialize` fills the rank and the size from `MPI_COMM_WORLD`; the caller has called `MPI_Init` first. ADAM's solver
-!< needs MPI: built with `-DELISHA_NO_MPI` the module is empty. Not part of the library: never used by `src/lib`.
+!< `initialize` fills the rank and the size from `MPI_COMM_WORLD`; the caller has called `MPI_Init` first. ADAM's
+!< solvers need MPI: built with `-DELISHA_NO_MPI` the module is empty. Not part of the library: never used by `src/lib`.
 #ifndef ELISHA_NO_MPI
 use :: mpi
 use :: penf, only : I4P
@@ -18,7 +18,7 @@ private
 public :: mpih
 
 type :: mpih_object
-   !< ADAM's MPI handler, the members the FFT solver reads.
+   !< ADAM's MPI handler, the members the Poisson solvers read.
    integer(I4P)              :: myrank=0_I4P       !< This rank in MPI_COMM_WORLD.
    integer(I4P)              :: procs_number=1_I4P !< Ranks of MPI_COMM_WORLD.
    character(:), allocatable :: myrankstr          !< Rank prefix of messages.
