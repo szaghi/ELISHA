@@ -16,6 +16,14 @@ matrix    = linux-gnu linux-nvhpc linux-oneapi
 fpm       = true
 docs_examples = docs/examples
 
+# the one-line installer (scripts/install.sh, rendered by fobis scaffold) builds the serial library, as fpm does: it
+# runs where no MPI may be (a fresh machine, the release's install check), and an MPI library must be built against
+# the site's own MPI, by the static-gnu/static-intel/static-nvf modes
+[installer]
+mode_gnu    = static-gnu-serial
+mode_intel  = static-intel-serial
+mode_nvidia = static-nvf-serial
+
 # fobis ecosystem check: what proves this project still works against a dependency's working copy
 [ecosystem]
 check = fobis fetch
@@ -109,6 +117,12 @@ output    = libelisha_serial.a
 help      = Static library, nvfortran, serial (no MPI), optimised
 template  = template-lib-static template-serial template-nvf template-release
 build_dir = lib/nvf/static-serial/
+output    = libelisha_serial.a
+
+[static-intel-serial]
+help      = Static library, ifx, serial (no MPI), optimised
+template  = template-lib-static template-intel-release template-intel template-serial
+build_dir = lib/intel/static-serial/
 output    = libelisha_serial.a
 
 # the device library: the host library plus ELISHA's device backends (src/device/: OpenACC + cuFFT), one

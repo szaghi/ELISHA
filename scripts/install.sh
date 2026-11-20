@@ -38,9 +38,9 @@ INSTALLER_VERSION=2
 # ---- the project (fobis scaffold renders these from the fobos) ----------------------------------------------------
 REPO='szaghi/ELISHA'         # owner/name on GitHub
 NAME='ELISHA'               # the release tarball is NAME-TAG.tar.gz
-MODE_GNU='static-gnu'       # the fobos mode of each compiler family (fobis builds)
-MODE_INTEL='static-intel'
-MODE_NVIDIA='static-nvf'
+MODE_GNU='static-gnu-serial'       # the fobos mode of each compiler family (fobis builds)
+MODE_INTEL='static-intel-serial'
+MODE_NVIDIA='static-nvf-serial'
 PRE_RULE=''            # a fobos rule run before the build, any build system
 CHECK_RULE=''        # a fobos rule run after the install
 APT_PACKAGES=''        # system packages for --deps
