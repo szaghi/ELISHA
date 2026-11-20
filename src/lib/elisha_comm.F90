@@ -16,6 +16,11 @@ module elisha_comm
 !< `MPI_REAL8`, `MPI_DOUBLE_COMPLEX`), the root is rank 0, and the buffers are assumed-size (`x(*)`, MPI's choice
 !< buffers: a contiguous array of any rank passes by sequence association, as ADAM passed it to MPI). Only the counts
 !< arrays significant at the root (or at no rank, for the exchanges) are read on one rank.
+!<
+!< The hierarchical solver (ported from ADAM's `adam_poisson_mg_object`) adds the reductions of ADAM's `MPI_REAL8`
+!< scalars (`sum_real8`, `max_real8`: in place, the datatype ADAM reduced with, not `sum_r`'s `MPI_DOUBLE_PRECISION`)
+!< and the exchange of its cell keys (`alltoallv_i8`, `MPI_INTEGER8`); its gathers and halo exchanges are the
+!< spectral solver's.
 #ifndef ELISHA_NO_MPI
 use mpi
 #endif
@@ -53,6 +58,10 @@ type :: elisha_comm_object
       procedure, pass(self) :: alltoallv_i4         !< Integers to and from every rank (MPI_ALLTOALLV).
       procedure, pass(self) :: alltoallv_r          !< Reals to and from every rank (MPI_ALLTOALLV, MPI_REAL8).
       procedure, pass(self) :: alltoallv_c          !< Complexes to and from every rank (MPI_ALLTOALLV, double complex).
+      ! the hierarchical solver's collectives: ADAM's MPI calls (see the module)
+      procedure, pass(self) :: sum_real8            !< In-place sum of a real array over the ranks (MPI_REAL8).
+      procedure, pass(self) :: max_real8            !< In-place maximum of a real array over the ranks (MPI_REAL8).
+      procedure, pass(self) :: alltoallv_i8         !< int64 values to and from every rank (MPI_ALLTOALLV, MPI_INTEGER8).
       procedure, nopass     :: wtime                !< Wall-clock time in seconds (MPI_WTIME; system_clock without MPI).
 endtype elisha_comm_object
 
@@ -455,6 +464,61 @@ contains
    if (stat == ELISHA_OK) y(rd(1)+1:rd(1)+sc(1)) = x(sd(1)+1:sd(1)+sc(1))
 #endif
    endsubroutine alltoallv_c
+
+   subroutine sum_real8(self, x, stat)
+   !< x <- the elementwise sum of x over the ranks (MPI_ALLREDUCE in place, MPI_REAL8, MPI_SUM: ADAM's datatype).
+   class(elisha_comm_object), intent(in)    :: self !< Context.
+   real(R_P),                 intent(inout) :: x(:) !< Values.
+   integer(I4P),              intent(out)   :: stat !< Status.
+#ifndef ELISHA_NO_MPI
+   integer                                  :: ierr !< MPI error status.
+
+   call MPI_ALLREDUCE(MPI_IN_PLACE, x, size(x), MPI_REAL8, MPI_SUM, self%comm, ierr)
+   stat = merge(ELISHA_OK, ELISHA_ERR_MPI, ierr == MPI_SUCCESS)
+#else
+   if (.false.) x(1) = x(1) + self%rank
+   stat = ELISHA_OK
+#endif
+   endsubroutine sum_real8
+
+   subroutine max_real8(self, x, stat)
+   !< x <- the elementwise maximum of x over the ranks (MPI_ALLREDUCE in place, MPI_REAL8, MPI_MAX).
+   class(elisha_comm_object), intent(in)    :: self !< Context.
+   real(R_P),                 intent(inout) :: x(:) !< Values.
+   integer(I4P),              intent(out)   :: stat !< Status.
+#ifndef ELISHA_NO_MPI
+   integer                                  :: ierr !< MPI error status.
+
+   call MPI_ALLREDUCE(MPI_IN_PLACE, x, size(x), MPI_REAL8, MPI_MAX, self%comm, ierr)
+   stat = merge(ELISHA_OK, ELISHA_ERR_MPI, ierr == MPI_SUCCESS)
+#else
+   if (.false.) x(1) = x(1) + self%rank
+   stat = ELISHA_OK
+#endif
+   endsubroutine max_real8
+
+   subroutine alltoallv_i8(self, x, sc, sd, y, rc, rd, stat)
+   !< To rank s x(sd(s+1)+1:sd(s+1)+sc(s+1)), from rank s into y(rd(s+1)+1:rd(s+1)+rc(s+1)) (MPI_ALLTOALLV,
+   !< MPI_INTEGER8).
+   class(elisha_comm_object), intent(in)    :: self   !< Context.
+   integer(I8P),              intent(in)    :: x(*)   !< Values to send.
+   integer(I4P),              intent(in)    :: sc(*)  !< Send count per rank [nranks].
+   integer(I4P),              intent(in)    :: sd(*)  !< Send displacement per rank [nranks].
+   integer(I8P),              intent(inout) :: y(*)   !< Values received.
+   integer(I4P),              intent(in)    :: rc(*)  !< Receive count per rank [nranks].
+   integer(I4P),              intent(in)    :: rd(*)  !< Receive displacement per rank [nranks].
+   integer(I4P),              intent(out)   :: stat   !< Status.
+#ifndef ELISHA_NO_MPI
+   integer                                  :: ierr   !< MPI error status.
+
+   call MPI_ALLTOALLV(x, sc, sd, MPI_INTEGER8, y, rc, rd, MPI_INTEGER8, self%comm, ierr)
+   stat = merge(ELISHA_OK, ELISHA_ERR_MPI, ierr == MPI_SUCCESS)
+#else
+   if (.false.) stat = self%rank
+   stat = merge(ELISHA_OK, ELISHA_ERR_MPI, sc(1) <= rc(1)) ! MPI_ERR_TRUNCATE
+   if (stat == ELISHA_OK) y(rd(1)+1:rd(1)+sc(1)) = x(sd(1)+1:sd(1)+sc(1))
+#endif
+   endsubroutine alltoallv_i8
 
    function wtime() result(t)
    !< Wall-clock time in seconds from an arbitrary origin: MPI_WTIME, or system_clock without MPI.

@@ -18,6 +18,7 @@ use elisha_spectral
 use elisha_extension
 use elisha_lattice_green_library
 use elisha_spectral_solver
+use elisha_hierarchical_solver
 implicit none
 private
 public :: I4P, I8P, R8P, R_P
@@ -54,4 +55,7 @@ public :: elisha_axis_map, elisha_set_plane
 public :: elisha_lattice_green
 ! the spectral (FFT) solver (elisha_spectral_solver)
 public :: elisha_spectral_solver_object
+! the hierarchical (multigrid FCG) solver (elisha_hierarchical_solver): the type, its CSR and vector types (a device
+! backend extends the hooks on them), the 2:1 seam's ghost constant (FLUME inverts it)
+public :: elisha_hierarchical_solver_object, dcsr, rvec, ivec, MG_SEAM_GHOST_SCALE
 endmodule elisha
