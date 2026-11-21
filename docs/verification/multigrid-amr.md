@@ -50,7 +50,9 @@ converges at first order for M and stalls for S1. Right: the hierarchical solver
 second order, the 2:1 face gravity first order, the truncation bounded.*
 
 ELISHA (gfortran 16.2, np 2; iterations, orders and errors the same on np 1 and 3) next to ADAM's documented
-numbers (`multigrid-amr.md`):
+numbers (`multigrid-amr.md`). ELISHA's V-cycle is the symmetric one ([the hierarchical
+solver](/guide/hierarchical-solver#the-symmetric-v-cycle)), so its FCG iterations on AMR are fewer than ADAM's; every
+order, error and truncation is the converged solution's and unchanged:
 
 | Asserted | Bound | ELISHA | ADAM (CPU) |
 |---|---|---|---|
@@ -59,16 +61,17 @@ numbers (`multigrid-amr.md`):
 | SV-9b: order of $\Phi$, base level 2 → 3 | $\ge 1.7$ | 1.923 (3-D), 1.920 (2-D) | 1.92, 1.92 |
 | SV-9b: growth of $\max\lvert\tau\rvert$ | $\le 1.5$ | 1.006 (3-D), 1.005 (2-D) | 1.006, 1.005 |
 | SV-9b: 2:1 face gravity order (reported) | | 1.032 (3-D), 1.113 (2-D) | 1.03, 1.11 |
-| SV-9b: FCG iterations (mean factor) | | 36, 39 (0.524, 0.543); 2-D 24, 25 (0.375, 0.398) | 36–39 (0.52–0.54); 24–25 (0.37–0.40) |
+| SV-9b: FCG iterations (mean factor) | | 26, 28 (0.406, 0.431); 2-D 17, 17 (0.245, 0.258) | 36–39 (0.52–0.54); 24–25 (0.37–0.40) |
 | SV-12a: iterations; order; truncation | $\le 1$; $\ge 1.7$; $\le 1.5$ growth | 1, 1; 1.952; 0.638 → 0.170 (growth 0.266) | 1; 1.95; 0.64 → 0.17 (0.27) |
-| SV-12b: order of $\Phi$; iterations; symmetry | $\ge 1.7$; ; $10^{-12}$ | 1.907 (3-D), 1.926 (2-D); 36, 35 and 22, 23; $\le 3.1\cdot10^{-18}$ | 1.91, 1.93; 35–36, 22–23; $\le 6.7\cdot10^{-18}$ |
+| SV-12b: order of $\Phi$; iterations; symmetry | $\ge 1.7$; ; $10^{-12}$ | 1.907 (3-D), 1.926 (2-D); 24, 25 and 16, 16; $\le 3.1\cdot10^{-18}$ | 1.91, 1.93; 35–36, 22–23; $\le 6.7\cdot10^{-18}$ |
 | E1b uniform: against the spectral solver; iterations | $10^{-8}$; $\le 1$ | $9.7\cdot10^{-15}$, $6.5\cdot10^{-16}$, $1.3\cdot10^{-15}$, $1.2\cdot10^{-14}$; 1 | $\le 1.2\cdot10^{-14}$; 1 |
 | E1b AMR: order of $\Phi$ (P/P D/N N/D; D/D N/N G/G; P/P N/N N/N; 2-D N/D P/P) | $\ge 1.7$ | 1.951, 2.004, 1.948, 2.001 | 1.95, 2.00, 1.95, 2.00 |
 | E1b AMR: order of the domain-face ghosts | $\ge 1.7$ | 1.955, 2.028, 1.952, 2.002 | 1.95, 2.03, 1.95, 2.00 |
-| E1b AMR: $\max\lvert\tau\rvert$; growth; iterations | $\le 1.5$ | 11.95 (3-D), 10.32 → 10.53 (2-D); 1.003, 1.021; 31–40, 21 | 12.0, 10.3 → 10.5; 1.00–1.02; 31–40, 21 |
-| E5c: iterations with the levels forced (exact coarsest) | | 14 (1), 47 (36), 25 (24), 41 (39), 53 (40), 52 (47) | the same |
+| E1b AMR: $\max\lvert\tau\rvert$; growth; iterations | $\le 1.5$ | 11.95 (3-D), 10.32 → 10.53 (2-D); 1.003, 1.021; 23–29, 15 | 12.0, 10.3 → 10.5; 1.00–1.02; 31–40, 21 |
+| E5c: iterations with the levels forced (exact coarsest) | | 14 (1), 32 (26), 19 (17), 31 (27), 38 (30), 36 (32) | 14 (1), 47 (36), 25 (24), 41 (39), 53 (40), 52 (47) |
 | E5c: $\max\lvert\Phi_{sub} - \Phi_{exact}\rvert / \max\lvert\Phi\rvert$ | $10^{-7}$ | $1.6\cdot10^{-14}$ to $1.1\cdot10^{-11}$ | $1.6\cdot10^{-14}$ to $1.1\cdot10^{-11}$ |
 | E1c: values differing, facade against direct; interleaved against alone | 0 | 0 in all six checks | 0 |
+| E1c: the direct solve converges (AMR 3-D D/D N/N G/G; 2-D N/D P/P) | residual $\le$ tolerance | 24, 15 iterations ($4.9\cdot10^{-11}$, $6.3\cdot10^{-11}$) | 2-D: stalls, 200 iterations at 0.1157 (not asserted) |
 | ghost cells unfilled | 0 | 0 | 0 |
 | mixed axes without `bc`; `bc` against the grid; a ghost-Dirichlet face against a kind | refused | `ELISHA_ERR_BC_MISSING`; `_BC_PERIODICITY`; `_BC_GHOST_PAIR` | refused (stop) |
 | facade: boundary values on the spectral path; isolated with `bc`; D(G) on AMR | refused | `_GHOST_VALUES`; `_ISOLATED_BC`; `_DG_AMR` | refused (stop) |
@@ -111,15 +114,16 @@ python3 scripts/verification/seam_operators.py   # the operator study, N = 8 16 
 - **Dirichlet boundaries cost nothing in symmetry or order** (SV-12): the coarsest level's odd extension is exact, one
   iteration on a uniform grid.
 - **The levels inside the blocks trade iterations for the root's gather** (E5c): 1 to 14 iterations on a uniform box
-  of 1:2:3 cells, 1 to 13 more on AMR ([the hierarchical solver](/guide/hierarchical-solver#the-method)).
-
-## Known limits
-
-- **The E1c 2-D N/D P/P solve does not converge.** In the facade leg, the 2-D quadtree with Neumann at the low x face,
-  Dirichlet at the high one and periodic y, SV-2's source and the manufactured boundary values: FCG stops at its 200
-  iterations with the residual at 0.1157. The same solve converges with zero boundary values, and with the manufactured
-  source and the same boundary values (38 iterations); with the source less $\rho_0$ it stalls at 0.0615. ADAM's own
-  multigrid (compiled unchanged in `src/tests`) stalls identically on this grid, so the defect is inherited, not a
-  port regression. The leg asserts the facade against the direct solve, bit for bit, as ADAM's did, and both stall
-  identically: it passes, and its line prints the direct solve's iterations and residual. The convergence is not
-  asserted; the cause is not identified.
+  of 1:2:3 cells, 2 to 8 more on AMR with the symmetric V-cycle (1 to 13 with ADAM's)
+  ([the hierarchical solver](/guide/hierarchical-solver#the-method)).
+- **ADAM's V-cycle stalled FCG on the E1c 2-D N/D P/P solve; the symmetric one converges in 15 iterations.** The
+  stall was 200 iterations with the residual at 0.1157, and ADAM's own multigrid stalled identically, so the defect
+  was inherited from ADAM. Its cause: the V-cycle read the coarser correction across a 2:1 face on the way up but never
+  applied the adjoint on the way down. That left the preconditioner nonsymmetric on AMR, with a symmetric part
+  indefinite on some seam modes ([the symmetric V-cycle](/guide/hierarchical-solver#the-symmetric-v-cycle)). The E1c
+  leg now asserts that the direct solve converges, on every AMR case.
+- **A convergence that depends on the right-hand side was a preconditioner defect.** Before the fix, E1b's AMR
+  2-D N/D P/P case (the same mesh, operator and V-cycle as E1c's) converged in 21 iterations while E1c's stalled. For a
+  symmetric positive definite pair of operator and preconditioner, FCG converges from any right-hand side; a stall
+  that a change of data cures points at the preconditioner. `vcycle_symmetry_defect` now guards it
+  (`elisha_test_hierarchical_solver_mpi`: at most $10^{-12}$, about $10^{-17}$ measured).

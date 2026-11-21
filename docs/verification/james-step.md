@@ -43,8 +43,8 @@ ELISHA (gfortran 16.2, np 2) next to ADAM's documented numbers (`multigrid-amr.m
 | SV-13a: against the spectral solver's isolated mode | $10^{-9}$ | $1.6\cdot10^{-15}$ ($16^3$), $2.63\cdot10^{-13}$ ($32^3$) | $\le 2.6\cdot10^{-13}$ |
 | SV-13a: iterations of the two solves; order | $\le 1$; $\ge 1.7$ | 1 + 1; 2.140 | 1 + 1; 2.14 |
 | SV-13b: order of $\Phi$, polytrope; uniform sphere | $\ge 1.7$; $\ge 1.2$ | 2.015; 1.862 | 2.01; 1.86 |
-| SV-13b: iterations (zero-ghost + second solve) | | 24 + 23, 25 + 23 | 24–25 + 23 |
-| symmetry of the solution map, first grid of each leg | $10^{-9}$ | $\le 2.0\cdot10^{-12}$ | $\le 1.7\cdot10^{-11}$ |
+| SV-13b: iterations (zero-ghost + second solve) | | 16 + 16, 17 + 15 (the symmetric V-cycle; ADAM's: 24 + 23, 25 + 23) | 24–25 + 23 |
+| symmetry of the solution map, first grid of each leg | $10^{-9}$ | $\le 5.2\cdot10^{-12}$ (np 1 to 3; FCG solutions, so set by the tolerance) | $\le 1.7\cdot10^{-11}$ |
 | James ghost values against the exact potential (SV-13a; SV-13b polytrope; sphere) | | $9.11\cdot10^{-4} \to 6.24\cdot10^{-5}$; $1.00\cdot10^{-4} \to 2.53\cdot10^{-5}$; $2.77\cdot10^{-4} \to 8.88\cdot10^{-5}$ | $9.1\cdot10^{-4} \to 6.2\cdot10^{-5}$; $1.0\cdot10^{-4} \to 2.5\cdot10^{-5}$; $2.8\cdot10^{-4} \to 8.9\cdot10^{-5}$ |
 | AMR against the uniform grid at the same base level ($32^3$, polytrope) | | $1.18\cdot10^{-3}$ against $2.31\cdot10^{-3}$ | $1.18\cdot10^{-3}$ against $2.31\cdot10^{-3}$ |
 | ghost cells unfilled | 0 | 0 | 0 |

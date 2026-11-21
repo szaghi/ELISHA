@@ -37,7 +37,7 @@ program elisha_sv_mg_mpi
 !<     `MAX_SUB_UNIFORM`);
 !<   - `--flail`: E1c, the facade against the solver it chooses called directly, bit for bit on every cell and ghost
 !<     (the spectral path on a uniform grid, the hierarchical on AMR with the manufactured boundary values given through
-!<     the facade's `boundary_faces`; the wide D(G) p = 4), a vector of three facades with per-component kinds solved
+!<     the facade's `boundary_faces`, its direct solve converged; the wide D(G) p = 4), a vector of three facades with per-component kinds solved
 !<     interleaved against three alone, and the refusals `--refuse-flail-ghost-fft` (`ELISHA_ERR_GHOST_VALUES`),
 !<     `--refuse-flail-isolated-bc` (`ELISHA_ERR_ISOLATED_BC`), `--refuse-flail-wide-amr` (`ELISHA_ERR_DG_AMR`).
 !< No leg flag runs every leg (the CI run). A refusal flag alone runs only that refusal: exit 0 when the setup (or the
@@ -804,7 +804,8 @@ contains
    subroutine check_flail_forward(label, bc, nk, level, amr, dg_order)
    !< E1c: the facade's `setup(..., bc)` and `solve_packed` against the solver it chooses called directly, bit for bit on
    !< every cell and ghost of phi; on AMR (the corner refined) with the manufactured boundary values as `ghost`, the
-   !< facade's from its `boundary_faces`, the direct solver's from its own list.
+   !< facade's from its `boundary_faces`, the direct solver's from its own list, and the direct solve converged (its
+   !< residual at most its stop tolerance).
    character(*), intent(in)           :: label    !< Label.
    integer(I4P), intent(in)           :: bc(2,3)  !< Kinds per face [lo/hi, axis].
    integer(I4P), intent(in)           :: nk       !< Cells per block along z.
@@ -844,8 +845,10 @@ contains
       enddo
       call fl%solve_packed(gr%mesh, buf, FACTOR, phi_f, stat, msg, ghost=ghost_f) ; if (failed('facade solve')) return
       call mg%solve_packed(gr%mesh, buf, FACTOR, phi_d, stat, msg, ghost=ghost_d) ; if (failed('mg solve')) return
-      ! reported, not asserted (ADAM's leg asserts the bitwise equality only): the 2-D N/D P/P case does not converge
-      note = ', FCG '//itoa(mg%iterations)//' iterations, residual '//fmt(mg%residual)//' (tolerance '// &
+      ! asserted (ADAM's leg asserted the bitwise equality only, and its 2-D N/D P/P solve stalled at 200 iterations,
+      ! the residual at 0.1157: the V-cycle without the adjoint of its seam coupling, ELISHA notes E1c)
+      ok = ok .and. mg%residual <= mg%tolerance_used
+      note = ', FCG '//itoa(mg%iterations)//' iterations, residual '//fmt(mg%residual)//' (<= tolerance '// &
              fmt(mg%tolerance_used)//')'
       call mg%destroy
    else
