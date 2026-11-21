@@ -1089,12 +1089,19 @@ contains
    real(R_P),    intent(in) :: p1(1-NGC:,1-NGC:,1-NGC:,1:) !< First potential.
    real(R_P),    intent(in) :: p2(1-NGC:,1-NGC:,1-NGC:,1:) !< Second potential (the reference).
    real(R_P)                :: d(2) !< The two maxima.
+   integer(I4P)             :: b, i, j, k !< Counters.
 
    d = 0._R_P
-   if (gr%nb > 0) then
-      d(1) = maxval(abs(p1(1:NB_SIDE,1:NB_SIDE,1:gr%nk,1:gr%nb) - p2(1:NB_SIDE,1:NB_SIDE,1:gr%nk,1:gr%nb)))
-      d(2) = maxval(abs(p2(1:NB_SIDE,1:NB_SIDE,1:gr%nk,1:gr%nb)))
-   endif
+   do b=1, gr%nb ! explicit loops: no array temporary (ifx puts them on the stack)
+      do k=1, gr%nk
+         do j=1, NB_SIDE
+            do i=1, NB_SIDE
+               d(1) = max(d(1), abs(p1(i,j,k,b) - p2(i,j,k,b)))
+               d(2) = max(d(2), abs(p2(i,j,k,b)))
+            enddo
+         enddo
+      enddo
+   enddo
    call c%max_real8(d, stat)
    endfunction interior_diff
 
@@ -1103,9 +1110,18 @@ contains
    real(R_P), intent(in) :: p1(:,:,:,:) !< First.
    real(R_P), intent(in) :: p2(:,:,:,:) !< Second.
    integer(I4P)          :: n(1)        !< Count.
+   integer(I4P)          :: i, j, k, b  !< Counters.
 
-   n = 0
-   if (size(p1) > 0) n = count(transfer(p1, 0_I8P, size(p1)) /= transfer(p2, 0_I8P, size(p2)), kind=I4P)
+   n = 0 ! explicit loops: no array temporary (ifx puts them on the stack)
+   do b=1, size(p1, dim=4)
+      do k=1, size(p1, dim=3)
+         do j=1, size(p1, dim=2)
+            do i=1, size(p1, dim=1)
+               if (transfer(p1(i,j,k,b), 0_I8P) /= transfer(p2(i,j,k,b), 0_I8P)) n(1) = n(1) + 1
+            enddo
+         enddo
+      enddo
+   enddo
    endfunction bits_differ
 
    subroutine isum(x)

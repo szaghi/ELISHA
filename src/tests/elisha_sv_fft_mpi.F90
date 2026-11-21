@@ -429,7 +429,7 @@ contains
          elseif (any(shape(g1) /= shape(g))) then
             iv(2) = size(g, kind=I4P)
          else
-            iv(2) = count(transfer(g1, 0_I8P, size(g1)) /= transfer(g, 0_I8P, size(g)), kind=I4P)
+            iv(2) = bits_differ(g1, g)
          endif
          call solo%destroy(stat)
       endif
@@ -437,6 +437,24 @@ contains
       rank_diff = iv(2)
    endif
    endsubroutine solve_level
+
+   function bits_differ(g1, g2) result(nd)
+   !< The values of two arrays of one shape whose bit patterns differ, by explicit loops: no array temporary (ifx puts
+   !< them on the stack, and the transform arrays of the isolated 64^3 solve overflow its default 8 MB).
+   real(R_P), intent(in) :: g1(:,:,:) !< First array.
+   real(R_P), intent(in) :: g2(:,:,:) !< Second array, of the same shape.
+   integer(I4P)          :: nd        !< Values that differ.
+   integer(I4P)          :: i, j, k   !< Counters.
+
+   nd = 0
+   do k=1, size(g1, dim=3)
+      do j=1, size(g1, dim=2)
+         do i=1, size(g1, dim=1)
+            if (transfer(g1(i,j,k), 0_I8P) /= transfer(g2(i,j,k), 0_I8P)) nd = nd + 1
+         enddo
+      enddo
+   enddo
+   endfunction bits_differ
 
    subroutine run_solve(cc, coords, nk, level, periodic, prof, need_g, phi, f, h, n3, m, g, stat, msg)
    !< On the context cc: the mesh of the given blocks, the setup, the source, the solve (phi set to the sentinel first),
