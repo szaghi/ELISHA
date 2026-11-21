@@ -369,7 +369,7 @@ contains
    call mg%solve_packed(gr%mesh, buf, FACTOR, phi_mg, stat, msg) ; if (failed('mg solve')) return
    call fft%setup(gr%mesh, c, stat, msg) ; if (failed('fft setup')) return
    call fft%solve_packed(gr%mesh, buf, FACTOR, phi_fft, stat, msg) ; if (failed('fft solve')) return
-   d = interior_diff(gr, phi_mg, phi_fft)
+   call interior_diff(gr, phi_mg, phi_fft, d)
    ok = d(1) / d(2) <= TOL_FFT .and. mg%iterations <= 1
    if (c%rank == 0) print '(A)', '   '//label//' |Phi_mg - Phi_fft| / max|Phi| '//fmt(d(1) / d(2))//', iterations '// &
       itoa(mg%iterations)//', residual '//fmt(mg%residual)//merge('  PASS', '  FAIL', ok)
@@ -522,7 +522,7 @@ contains
          call alloc_phi(gr, phi_fft)
          call fft%setup(gr%mesh, c, stat, msg, isolated=.true.) ; if (failed('fft setup')) return
          call fft%solve_packed(gr%mesh, buf, FACTOR, phi_fft, stat, msg) ; if (failed('fft solve')) return
-         d = interior_diff(gr, phi, phi_fft)
+         call interior_diff(gr, phi, phi_fft, d)
          dfft = max(dfft, d(1) / d(2))
          ok = ok .and. d(1) / d(2) <= TOL_FFT_ISOLATED .and. mg%iterations0 <= 1 .and. mg%iterations <= 1
          note = note//', |Phi_mg - Phi_fft| / max|Phi| '//fmt(d(1) / d(2))
@@ -590,7 +590,7 @@ contains
    call mg%solve_packed(gr%mesh, buf, FACTOR, phi_mg, stat, msg) ; if (failed('mg solve')) return
    call fft%setup(gr%mesh, c, stat, msg, bc=bc) ; if (failed('fft setup')) return
    call fft%solve_packed(gr%mesh, buf, FACTOR, phi_fft, stat, msg) ; if (failed('fft solve')) return
-   d = interior_diff(gr, phi_mg, phi_fft)
+   call interior_diff(gr, phi_mg, phi_fft, d)
    ok = d(1) / d(2) <= TOL_FFT .and. mg%iterations <= 1 .and. &
         (mg%singular .eqv. .not.any(bc == ELISHA_BC_DIRICHLET .or. bc == ELISHA_BC_DIRICHLET_GHOST))
    if (c%rank == 0) print '(A)', '   '//label//' |Phi_mg - Phi_fft| / max|Phi| '//fmt(d(1) / d(2))//', iterations '// &
@@ -1124,12 +1124,13 @@ contains
    e_phi = e(1) ; e_ghost = e(2) ; unfilled = u(1)
    endsubroutine measure_star
 
-   function interior_diff(gr, p1, p2) result(d)
-   !< max |p1 - p2| and max |p2| over the interior cells, over the ranks.
-   type(grid_t), intent(in) :: gr   !< Grid.
-   real(R_P),    intent(in) :: p1(1-NGC:,1-NGC:,1-NGC:,1:) !< First potential.
-   real(R_P),    intent(in) :: p2(1-NGC:,1-NGC:,1-NGC:,1:) !< Second potential (the reference).
-   real(R_P)                :: d(2) !< The two maxima.
+   subroutine interior_diff(gr, p1, p2, d)
+   !< max |p1 - p2| and max |p2| over the interior cells, over the ranks. A subroutine, not an array-valued function:
+   !< nvfortran 26.9 with -Mbounds (tests-nvf-debug) reports garbage bounds for the function's d(2) result and stops.
+   type(grid_t), intent(in)  :: gr   !< Grid.
+   real(R_P),    intent(in)  :: p1(1-NGC:,1-NGC:,1-NGC:,1:) !< First potential.
+   real(R_P),    intent(in)  :: p2(1-NGC:,1-NGC:,1-NGC:,1:) !< Second potential (the reference).
+   real(R_P),    intent(out) :: d(2) !< The two maxima.
    integer(I4P)             :: b, i, j, k !< Counters.
 
    d = 0._R_P
@@ -1144,7 +1145,7 @@ contains
       enddo
    enddo
    call c%max_real8(d, stat)
-   endfunction interior_diff
+   endsubroutine interior_diff
 
    function bits_differ(p1, p2) result(n)
    !< The values of two arrays of one shape whose bit patterns differ (this rank).
