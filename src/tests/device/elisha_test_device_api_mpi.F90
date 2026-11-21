@@ -18,7 +18,11 @@ program elisha_test_device_api_mpi
 !< (`elisha_solver_object` with both device molds) on an AMR and a uniform mesh, D against E only. And the stencil level
 !< operators on the device (M7, audit C2; the backend's default since 2026-11-20) against CSR (set explicitly), AMR periodic and D/N
 !< with boundary values: the potential and the energy within `TOL_STENCIL` relative, the iterations within one (printed:
-!< whether bitwise, and the difference). Rank 0 prints one
+!< whether bitwise, and the difference).
+!< And the symmetric V-cycle (the default, ELISHA notes E1c) on the device against the host solver, AMR periodic and
+!< D/N with boundary values: within `TOL_SYM_HOST`, the iterations within one, the device V-cycle's symmetry defect at
+!< most `TOL_VSYM`; and an FCG stopped at max_iterations = 1: `ELISHA_ERR_NOT_CONVERGED` with host arrays and with
+!< `on_device`, the last iterates bitwise equal. Rank 0 prints one
 !< line per case and `elisha_test_device_api_mpi: ok` or `FAILED`. Built only in `tests-nvf-oac`; each rank takes the
 !< GPU of its node-local rank; GPU-aware MPI above one rank.
 use mpi
@@ -26,8 +30,9 @@ use, intrinsic :: iso_fortran_env, only : int64
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use openacc
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
-                   ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_ADAM, &
-                   elisha_comm_object, elisha_mesh_object, elisha_solver_object, elisha_diagnostics_object
+                   ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_ADAM, ELISHA_ERR_NOT_CONVERGED, &
+                   elisha_comm_object, elisha_mesh_object, elisha_solver_object, elisha_diagnostics_object,     &
+                   elisha_hierarchical_solver_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
 use adam_mpih_global, only : mpih
@@ -38,6 +43,8 @@ implicit none
 real(R_P),    parameter  :: FACTOR=2.5_R_P      !< Source factor.
 real(R_P),    parameter  :: TOL=1.e-11_R_P      !< FCG tolerance.
 real(R_P),    parameter  :: TOL_STENCIL=1.e-9_R_P !< Stencil against CSR: potential and energy, relative.
+real(R_P),    parameter  :: TOL_SYM_HOST=1.e-9_R_P !< Symmetric V-cycle, device against host: potential, relative.
+real(R_P),    parameter  :: TOL_VSYM=1.e-12_R_P  !< The device V-cycle's symmetry defect.
 integer(I4P), parameter  :: MAX_IT=100_I4P      !< FCG iterations allowed.
 integer(I4P), parameter  :: NG=2_I4P            !< Ghost layers.
 integer(I4P), parameter  :: D=ELISHA_BC_DIRICHLET, NM=ELISHA_BC_NEUMANN, G=ELISHA_BC_DIRICHLET_GHOST !< Kinds.
@@ -70,6 +77,8 @@ if (failures == 0) then
    call facade_case('facade uniform (spectral)', F_)
    call stencil_case('MG stencil AMR periodic', [2,2,2], H16, [0,0,0], T_)
    call stencil_case('MG stencil AMR D/N + g', [2,2,2], H16, [0,1,0], F_, bc=kinds(D,NM, NM,D, D,D))
+   call sym_case('MG symmetric AMR periodic', [2,2,2], H16, [0,0,0], T_)
+   call sym_case('MG symmetric AMR D/N + g', [2,2,2], H16, [0,1,0], F_, bc=kinds(D,NM, NM,D, D,D))
 endif
 nfail = failures
 call MPI_ALLREDUCE(MPI_IN_PLACE, nfail, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr)
@@ -329,6 +338,91 @@ contains
    call report(label//': on_device vs host arrays', nbad)
    call e%destroy ; call dv%destroy ; call mesh%destroy
    endsubroutine facade_case
+
+   subroutine sym_case(label, nblk0, dx0, refine, periodic, bc)
+   !< The symmetric V-cycle on the device (ELISHA notes E1c, the default): the device solver (host arrays) against the
+   !< host solver, both symmetric, within `TOL_SYM_HOST` relative and the iterations within one; the device V-cycle's
+   !< `vcycle_symmetry_defect` at most `TOL_VSYM`; and an FCG stopped at max_iterations = 1 (decision C): host arrays
+   !< and `on_device` both `ELISHA_ERR_NOT_CONVERGED`, the device-resident last iterate staged back bitwise the
+   !< host-array one.
+   character(*), intent(in)           :: label     !< Case label.
+   integer,      intent(in)           :: nblk0(3)  !< Blocks per axis at level 0.
+   real(R_P),    intent(in)           :: dx0(3)    !< Cell spacing at level 0.
+   integer,      intent(in)           :: refine(3) !< The refined block.
+   logical,      intent(in)           :: periodic  !< Every axis periodic.
+   integer(I4P), intent(in), optional :: bc(2,3)   !< Kinds.
+   type(grid_object)                           :: grid   !< ADAM's grid (unused).
+   type(field_object)                          :: field  !< ADAM's field (unused).
+   type(elisha_mesh_object)                    :: mesh   !< ELISHA's mesh.
+   type(elisha_hierarchical_solver_object)     :: h      !< Host, symmetric.
+   type(elisha_hierarchical_solver_oac_object) :: e, e1, d1 !< Device symmetric; max_iterations 1, host and device arrays.
+   real(R_P), allocatable :: buf(:), ph(:,:,:,:), pe(:,:,:,:), p1(:,:,:,:), pd(:,:,:,:), gv(:), x(:), y(:) !< Fields.
+   real(R_P)              :: r(1), vsym       !< Relative difference, the V-cycle's symmetry defect.
+   integer(I4P)           :: nb, i, nbad(1), st1, std !< Blocks, counter, differing bits, the two statuses.
+   integer                :: ierr_            !< MPI error status.
+   logical                :: ok               !< Pass flag.
+
+   ncase = ncase + 1
+   call make_mesh(nblk0, dx0, .true., refine, periodic, grid, field, mesh, buf, nb)
+   allocate(ph(1-NG:N3(1)+NG,1-NG:N3(2)+NG,1-NG:N3(3)+NG,1:max(nb,1)))
+   allocate(pe, mold=ph) ; allocate(p1, mold=ph) ; allocate(pd, mold=ph)
+   ph = 0._R_P ; pe = 0._R_P ; p1 = 0._R_P ; pd = 0._R_P
+   call h%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
+   if (stat == ELISHA_OK) call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
+   if (stat == ELISHA_OK) call e1%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=1_I4P, bc=bc)
+   if (stat == ELISHA_OK) call d1%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=1_I4P, bc=bc)
+   if (stat /= ELISHA_OK) then
+      call fail(label//': setup: '//msg) ; return
+   endif
+   allocate(gv(max(e%nbnd,1)))
+   gv = 0._R_P
+   do i=1, e%nbnd
+      gv(i) = 0.3_R_P + sin(3._R_P * e%bnd_x(1,i) + 0.4_R_P) + 0.2_R_P * e%bnd_x(3,i)
+   enddo
+   if (present(bc)) then
+      call h%solve_packed(mesh, buf, FACTOR, ph, stat, msg, ghost=gv)
+      if (stat == ELISHA_OK) call e%solve_packed(mesh, buf, FACTOR, pe, stat, msg, ghost=gv)
+   else
+      call h%solve_packed(mesh, buf, FACTOR, ph, stat, msg)
+      if (stat == ELISHA_OK) call e%solve_packed(mesh, buf, FACTOR, pe, stat, msg)
+   endif
+   if (stat /= ELISHA_OK) then
+      call fail(label//': solve: '//msg) ; return
+   endif
+   r = maxval(abs(flat(pe) - flat(ph))) / max(maxval(abs(flat(ph))), tiny(1._R_P))
+   call MPI_ALLREDUCE(MPI_IN_PLACE, r, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr_)
+   allocate(x(max(nb*product(N3),1)), y(max(nb*product(N3),1)))
+   do i=1, size(x)
+      x(i) = sin(1.3_R_P * i + 0.7_R_P * c%rank) ; y(i) = cos(2.1_R_P * i - 0.4_R_P * c%rank)
+   enddo
+   vsym = e%vcycle_symmetry_defect(x, y, stat)
+   if (stat /= ELISHA_OK) call fail(label//': vcycle_symmetry_defect')
+   ! max_iterations 1: host arrays and on_device
+   if (present(bc)) then
+      call e1%solve_packed(mesh, buf, FACTOR, p1, st1, msg, ghost=gv)
+   else
+      call e1%solve_packed(mesh, buf, FACTOR, p1, st1, msg)
+   endif
+   !$acc enter data copyin(buf, pd)
+   if (present(bc)) then
+      call d1%solve_packed(mesh, buf, FACTOR, pd, std, msg, ghost=gv, on_device=.true.)
+   else
+      call d1%solve_packed(mesh, buf, FACTOR, pd, std, msg, on_device=.true.)
+   endif
+   !$acc update self(pd)
+   !$acc exit data delete(buf, pd)
+   nbad = differ(flat(pd), flat(p1))
+   call MPI_ALLREDUCE(MPI_IN_PLACE, nbad, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr_)
+   ok = r(1) <= TOL_SYM_HOST .and. abs(e%iterations - h%iterations) <= 1 .and. vsym <= TOL_VSYM .and. &
+        st1 == ELISHA_ERR_NOT_CONVERGED .and. std == ELISHA_ERR_NOT_CONVERGED .and. nbad(1) == 0 .and.  &
+        .not.e1%converged .and. .not.d1%converged
+   if (c%rank == 0) print '(A,A,A,I0,A,I0,A,ES9.2,A,ES9.2,A,A,A,I0,A,A)', 'elisha_test_device_api_mpi: ', label, &
+      ': iterations device/host ', e%iterations, '/', h%iterations, ', rel diff ', r(1), ', V-cycle symmetry ', vsym, &
+      ', max_iterations 1: ', merge('NOT_CONVERGED', 'other        ', st1 == ELISHA_ERR_NOT_CONVERGED .and. &
+      std == ELISHA_ERR_NOT_CONVERGED), ', on_device vs host arrays differing ', nbad(1), merge('  ok  ', '  FAIL', ok)
+   if (.not.ok) call fail(label//': the symmetric V-cycle on the device, or NOT_CONVERGED')
+   call h%destroy ; call e%destroy ; call e1%destroy ; call d1%destroy ; call mesh%destroy
+   endsubroutine sym_case
 
    subroutine stencil_case(label, nblk0, dx0, refine, periodic, bc)
    !< The device hierarchical solver with the stencil level operators against CSR (host arrays, cold solves).
