@@ -1,4 +1,4 @@
 $ amr
-hierarchical T, FCG iterations 18, converged T
+hierarchical T, FCG iterations 14, converged T
 energy -1.0683E-03
 max |phi - phi_exact| / max |phi_exact|: 1.44E-02
