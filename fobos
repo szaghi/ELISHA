@@ -189,8 +189,10 @@ help      = Tests, ifx + MPI, optimised (fortran-toolchains matrix: family intel
 template  = template-tests template-intel-release template-intel template-mpi
 
 [tests-intel-debug]
-help      = Tests, ifx + MPI, all checks on
+help      = Tests, ifx + MPI, all checks on (but arg_temp_created: a performance note, printed with a traceback at
+            every call that builds an argument temporary; it flooded the verification tests' output to 82 GB)
 template  = template-tests template-intel template-mpi template-debug
+cflags    = -c $STD_INT -check noarg_temp_created
 
 # ── benchmark modes: src/bench/elisha_bench_spectral_mpi.F90 into exe-bench/ (not a test: scripts/run_tests.sh runs
 # exe/ only, fpm does not build src/bench); the ADAM oracle it times against lives in src/tests/ ──
