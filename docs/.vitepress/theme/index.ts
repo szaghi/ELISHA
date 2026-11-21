@@ -8,6 +8,7 @@ import DefaultTheme from 'vitepress/theme'
 import { h, nextTick, watch } from 'vue'
 import { onContentUpdated, useData, useRoute, withBase } from 'vitepress'
 import { pageRedirects } from './redirects'
+import HomeGallery from './HomeGallery.vue'
 import { data as darkFigures } from './dark-figures.data'
 import './custom.css'
 
@@ -64,7 +65,8 @@ const Layout = {
           { immediate: true })
     onContentUpdated(() => swapFigures(isDark.value, site.value.base))
     watch(isDark, (dark) => nextTick(() => swapFigures(dark, site.value.base)))
-    return () => h(DefaultTheme.Layout)
+    // the landing page's casts and figures, right under the hero (HomeGallery.vue)
+    return () => h(DefaultTheme.Layout, null, { 'home-hero-after': () => h(HomeGallery) })
   },
 }
 

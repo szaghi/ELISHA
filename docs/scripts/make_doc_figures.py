@@ -9,7 +9,8 @@ or by hand, on the data a run of the programs with `dump` wrote into DIR:
 
 Every figure is drawn twice, on the identity's two grounds (elisha_palette.py): `<name>.png` on washi and
 `<name>-dark.png` on Kōyō night; the docs theme shows the twin of the reader's theme. Every animation is encoded per
-theme as `<name>-<theme>.webm` (VP9) and `.mp4` (H.264), with the last frame as the poster `<name>-<theme>.png`.
+theme as `<name>-<theme>.webm` (VP9) and `.mp4` (H.264), with the last frame as the poster `<name>-<theme>.png`, and
+as an animated `<name>-<theme>.webp`, 480 px wide, for the README (GitHub does not play repository videos).
 
 Figures (the program and its dump):
 
@@ -325,7 +326,11 @@ def encode(frames: Path, out: Path, name: str, theme: str, fps: int, width: int,
                     f'{base}.mp4'], check=True)
     subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(frames / f'f{last:04d}.png'), '-vf', scale,
                     '-frames:v', '1', f'{base}.png'], check=True)
-    for ext in ('webm', 'mp4', 'png'):
+    # the README's animation: GitHub shows an animated WebP in <img> (it does not play the repository's videos)
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-framerate', str(fps), '-i', str(frames / 'f%04d.png'),
+                    '-vf', 'scale=480:-2:flags=lanczos', '-c:v', 'libwebp_anim', '-lossless', '0', '-q:v', '62',
+                    '-loop', '0', f'{base}.webp'], check=True)
+    for ext in ('webm', 'mp4', 'png', 'webp'):
         print(f'  {(out / f"{name}-{theme}.{ext}").relative_to(ROOT)}')
 
 

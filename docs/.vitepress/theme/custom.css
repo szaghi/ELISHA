@@ -226,3 +226,61 @@
   border-radius: 50%;
   padding: 0;
 }
+
+/* ---------- Layout (not identity): the landing page's "see it run" (HomeGallery.vue) ----------
+   Right under the hero: the casts in a justified row (each card grows with its video's aspect ratio, --ar, so the
+   videos share one height), then four figure cards; one column on phones. Flat, as the other cards. */
+/* the side padding of VitePress' hero and features (24, 48, 64 px), so the gallery lines up with both */
+.elisha-run { padding: 8px 24px 40px; }
+@media (min-width: 640px) { .elisha-run { padding: 8px 48px 40px; } }
+@media (min-width: 960px) { .elisha-run { padding: 8px 64px 48px; } }
+.elisha-run > div { max-width: 1152px; margin-left: auto; margin-right: auto; }
+.elisha-run-casts {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+@media (min-width: 640px) {
+  .elisha-run-casts { display: flex; align-items: stretch; }
+  .elisha-run-cast { flex: var(--ar, 1.5) 1 0; min-width: 0; }
+}
+.elisha-run-cast {
+  margin: 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--vp-c-bg-soft);
+}
+.elisha-run-cast video { width: 100%; height: auto; vertical-align: top; }
+.elisha-run-cast figcaption { padding: 8px 12px 10px; font-size: 13px; line-height: 1.5; }
+.elisha-run-cast figcaption a { color: var(--vp-c-text-2); text-decoration: none; }
+.elisha-run-cast figcaption a:hover { color: var(--vp-c-brand-1); }
+.elisha-run-figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+@media (min-width: 960px) {
+  .elisha-run-figures { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.elisha-run-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-1);
+  text-decoration: none;
+}
+.elisha-run-card:hover { border-color: var(--vp-c-brand-1); }
+.elisha-run-card img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: contain;
+  background: var(--vp-c-bg);
+  padding: 6px;
+}
+.elisha-run-card strong { padding: 8px 12px 0; font-size: 14px; }
+.elisha-run-card span { padding: 2px 12px 10px; font-size: 13px; line-height: 1.45; color: var(--vp-c-text-2); }

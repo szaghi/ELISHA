@@ -23,6 +23,20 @@
 [![License: BSD-3](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE.bsd-3.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE.mit.md)
 
+<p>
+<a href="https://szaghi.github.io/ELISHA/tutorial/08-embers"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/public/tutorial/casts/t08-embers-dark.webp"><img src="docs/public/tutorial/casts/t08-embers-light.webp" alt="Two embers orbiting in free space on an adaptive mesh, one isolated hierarchical solve per frame" height="300"></picture></a>
+<a href="https://szaghi.github.io/ELISHA/tutorial/06-iterations"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/public/tutorial/casts/t06-iterates-dark.webp"><img src="docs/public/tutorial/casts/t06-iterates-light.webp" alt="The error of each FCG iterate on an AMR mesh: the symmetric V-cycle converges in 12 iterations, ADAM's in 19" height="300"></picture></a>
+</p>
+<p><sub><i>Left: two embers in free space, the mesh refined around them at every step. Right: the error of each FCG
+iterate on an AMR mesh, the symmetric V-cycle against ADAM's, 12 iterations against 19.</i></sub></p>
+<p>
+<a href="https://szaghi.github.io/ELISHA/tutorial/01-box"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/public/tutorial/t01-box-dark.png"><img src="docs/public/tutorial/t01-box.png" alt="A periodic box: the potential and its second-order error" height="150"></picture></a>
+<a href="https://szaghi.github.io/ELISHA/tutorial/03-isolated"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/public/tutorial/t03-isolated-dark.png"><img src="docs/public/tutorial/t03-isolated.png" alt="A star in empty space against the same star among its periodic images" height="150"></picture></a>
+<br>
+<a href="https://szaghi.github.io/ELISHA/tutorial/04-amr"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/public/tutorial/t04-amr-dark.png"><img src="docs/public/tutorial/t04-amr.png" alt="The star on three levels of an AMR mesh, the rings continuous across the seams" height="150"></picture></a>
+<a href="https://szaghi.github.io/ELISHA/tutorial/02-faces"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/public/tutorial/t02-faces-dark.png"><img src="docs/public/tutorial/t02-faces.png" alt="What each face kind writes into the ghost cell" height="150"></picture></a>
+</p>
+
 <div>
 <table>
 <tr>
