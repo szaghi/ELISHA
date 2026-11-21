@@ -62,10 +62,18 @@ program elisha_sv_fft_mpi
 !<   --no-rank-check    skip the rank-0 re-solve and its bitwise comparison;
 !<   --no-periodic, --refuse-isolated-X   only that refusal: exit 0 when the setup returns the expected code (printed
 !<                      by name), 1 otherwise. ADAM's run had to stop (exit 1); ELISHA returns a status instead.
+!< `--device` (only in the device build, `tests-nvf-oac`, `exe-oac/`): the cuFFT backend
+!< (`elisha_spectral_solver_cufft_object`), each rank on the GPU of its node-local rank; the same bounds, and the dumps
+!< compare with the host build's to round-off (`scripts/verification/poisson_oracle.py compare`).
 !< Built with `-DELISHA_NO_MPI` the program runs on one rank, without the rank-invariance check. The FP traps of a debug
 !< build are off around `MPI_Init` only (hwloc raises IEEE flags inside it).
 #ifndef ELISHA_NO_MPI
 use mpi
+#endif
+#ifdef _CUFFT
+! tests-nvf-oac: the device backends, selected at run time by --device
+use openacc
+use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchical_solver_oac_object
 #endif
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use elisha, only : I4P, I8P, R_P, ELISHA_OK, ELISHA_ERR_BC_MISSING, ELISHA_ERR_ISOLATED_PERIODIC,           &
@@ -104,11 +112,13 @@ integer(I4P)              :: nrows                       !< Summary rows used.
 integer(I4P)              :: a, stat                     !< Counter, status.
 integer                   :: ierr, world                 !< MPI error status, the world communicator.
 logical                   :: halting(3)                  !< The FP halting modes of the build (debug: on).
+logical                   :: device                      !< --device: the device backends.
 real(R_P)                 :: t0                          !< Wall clock at the start.
 character(:), allocatable :: msg                         !< Message.
 
 run_periodic = .true. ; run_isolated = .true. ; rank_check = .true.
 refusal = '' ; dump_dir = '' ; nrows = 0
+device = .false.
 a = 0
 do while (a < command_argument_count())
    a = a + 1
@@ -125,6 +135,7 @@ do while (a < command_argument_count())
    case('--dump')
       a = a + 1
       call get_command_argument(a, dump_dir)
+   case('--device')   ; device = .true.
    case default
       if (index(arg, '--refuse-isolated-') == 1) then
          refusal = arg(19:)
@@ -142,6 +153,14 @@ call ieee_set_halting_mode(ieee_usual, halting)
 world = MPI_COMM_WORLD
 #else
 halting = .false. ; ierr = 0 ; world = 0
+#endif
+#ifdef _CUFFT
+if (device) call select_device
+#else
+if (device) then
+   print '(A)', 'elisha_sv_fft_mpi: --device needs the device build (tests-nvf-oac)'
+   error stop 2
+endif
 #endif
 call c%init(world, stat, msg)
 if (stat /= ELISHA_OK) then
@@ -475,7 +494,7 @@ contains
    integer(I4P),              intent(out)   :: stat        !< Status.
    character(:), allocatable, intent(out)   :: msg         !< Message.
    type(elisha_mesh_object)            :: mesh   !< Mesh.
-   type(elisha_spectral_solver_object) :: solver !< Solver.
+   class(elisha_spectral_solver_object), allocatable :: solver !< Solver.
    real(R_P),    allocatable :: buf(:)           !< Packed source.
    real(R_P)                 :: lb(3), emin(3)   !< Domain lengths, lower corner.
    real(R_P)                 :: dxc(3)           !< Cell spacing (ADAM's field%dxyz).
@@ -483,6 +502,7 @@ contains
    logical                   :: null(3)          !< Null axes.
    integer(I4P)              :: nijk(3), nb, b, i, j, k, p !< Cells per block, blocks, counters.
 
+   call new_fft(solver)
    is_iso = prof /= PROFILE_PERIODIC
    cube = is_iso
    nijk = [NB_SIDE, NB_SIDE, nk]
@@ -534,7 +554,7 @@ contains
    logical,      intent(in) :: cube     !< The cube [-1,1]^3 (else [0,1] x [0,2] x [0,3]).
    integer(I4P), intent(in) :: expected !< Expected status.
    type(elisha_mesh_object)            :: mesh   !< Mesh.
-   type(elisha_spectral_solver_object) :: solver !< Solver.
+   class(elisha_spectral_solver_object), allocatable :: solver !< Solver.
    integer(I4P), allocatable :: all_c(:,:), my_c(:,:) !< Every block, this rank's blocks.
    real(R_P)                 :: lb(3), emin(3)   !< Domain lengths, lower corner.
    logical                   :: null(3)          !< Null axes.
@@ -542,6 +562,7 @@ contains
    logical                   :: ok               !< Pass flag.
    character(:), allocatable :: msg              !< Message.
 
+   call new_fft(solver)
    nijk = [NB_SIDE, NB_SIDE, nk]
    null = [.false., .false., nk == 1]
    call domain(cube, lb, emin)
@@ -806,4 +827,35 @@ contains
    write(w, '(F8.3)') x
    s = trim(adjustl(w))
    endfunction fmtf
+   subroutine new_fft(s)
+   !< A spectral solver of the run's backend: the host's, or with --device the cuFFT one (tests-nvf-oac).
+   class(elisha_spectral_solver_object), allocatable, intent(inout) :: s !< Solver.
+
+   if (allocated(s)) deallocate(s)
+#ifdef _CUFFT
+   if (device) then
+      allocate(elisha_spectral_solver_cufft_object :: s)
+      return
+   endif
+#endif
+   allocate(elisha_spectral_solver_object :: s)
+   endsubroutine new_fft
+
+#ifdef _CUFFT
+   subroutine select_device
+   !< --device: each rank on the GPU of its node-local rank modulo the node's GPUs (none: stop).
+   integer :: local_comm, local_rank, nd, ierr_ !< Node communicator, node-local rank, GPUs, MPI error status.
+
+   call MPI_COMM_SPLIT_TYPE(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, local_comm, ierr_)
+   call MPI_COMM_RANK(local_comm, local_rank, ierr_)
+   call MPI_COMM_FREE(local_comm, ierr_)
+   nd = acc_get_num_devices(acc_device_nvidia)
+   if (nd < 1) then
+      print '(A)', 'device run: no NVIDIA GPU visible to this rank'
+      error stop 1
+   endif
+   call acc_set_device_num(mod(local_rank, nd), acc_device_nvidia)
+   call acc_init(acc_device_nvidia)
+   endsubroutine select_device
+#endif
 endprogram elisha_sv_fft_mpi

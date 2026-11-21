@@ -46,9 +46,16 @@ program elisha_sv_bc_mpi
 !< Usage: `mpirun -np N exe/elisha_sv_bc_mpi [--compact] [--wide] [--zero] [--prism] [--free] [--order]`
 !<        `mpirun -np N exe/elisha_sv_bc_mpi --refuse-mixed-periodic | --refuse-mixed-ghost | --refuse-wide-isolated |
 !<         --refuse-zero-mixed | --refuse-free-compact`
+!< `--device` (only in the device build, `tests-nvf-oac`, `exe-oac/`): the cuFFT spectral backend, each rank on the GPU
+!< of its node-local rank; the same bounds.
 !< Built with `-DELISHA_NO_MPI` it runs on one rank. The FP traps of a debug build are off around `MPI_Init` only.
 #ifndef ELISHA_NO_MPI
 use mpi
+#endif
+#ifdef _CUFFT
+! tests-nvf-oac: the device backends, selected at run time by --device
+use openacc
+use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchical_solver_oac_object
 #endif
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use elisha, only : I4P, I8P, R_P, ELISHA_OK, ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN,          &
@@ -98,12 +105,14 @@ integer(I4P)              :: lit(2)        !< A leg's CG iteration range.
 logical                   :: lok           !< A leg's verdict.
 integer                   :: ierr, world   !< MPI error status, the world communicator.
 logical                   :: halting(3)    !< The FP halting modes of the build (debug: on).
+logical                   :: device                      !< --device: the device backends.
 real(R_P)                 :: t0, tl        !< Wall clock at the start, at a leg's start.
 character(:), allocatable :: msg           !< Message.
 
 a_d1 = 0._R_P
 a_d1(1:1,1) = FD_D1_S1 ; a_d1(1:2,2) = FD_D1_S2 ; a_d1(1:3,3) = FD_D1_S3 ; a_d1(1:4,4) = FD_D1_S4
 leg = .false. ; refusal = '' ; nrows = 0 ; cfg_order = 0
+device = .false.
 a = 0
 do while (a < command_argument_count())
    a = a + 1
@@ -115,6 +124,7 @@ do while (a < command_argument_count())
    case('--prism')   ; leg(4) = .true.
    case('--free')    ; leg(5) = .true.
    case('--order')   ; leg(6) = .true.
+   case('--device')   ; device = .true.
    case default
       if (index(arg, '--refuse-') == 1) then
          refusal = arg(10:)
@@ -133,6 +143,14 @@ call ieee_set_halting_mode(ieee_usual, halting)
 world = MPI_COMM_WORLD
 #else
 halting = .false. ; ierr = 0 ; world = 0
+#endif
+#ifdef _CUFFT
+if (device) call select_device
+#else
+if (device) then
+   print '(A)', 'elisha_sv_bc_mpi: --device needs the device build (tests-nvf-oac)'
+   error stop 2
+endif
 #endif
 call c%init(world, stat, msg)
 if (stat /= ELISHA_OK) then
@@ -362,7 +380,7 @@ contains
    real(R_P),    intent(out) :: e_disc    !< Discrete error, relative.
    real(R_P),    intent(out) :: e_cont    !< Continuum error, max.
    real(R_P),    intent(out) :: e_energy  !< Energy error, relative.
-   type(elisha_spectral_solver_object) :: solver !< The solver.
+   class(elisha_spectral_solver_object), allocatable :: solver !< The solver.
    integer(I4P)              :: gw         !< Ghost layers read back: 1, or p for the wide operator.
    integer(I4P)              :: ncell(3)   !< Global cells per direction.
    real(R_P)                 :: dxyz(3)    !< Spacing.
@@ -375,6 +393,7 @@ contains
    real(R_P)                 :: ph, ph_c, e, red(3), esum(1) !< Work.
    integer(I4P)              :: nbl, b, i, j, k, cc, d_ !< Counters.
 
+   call new_fft(solver)
    e_disc = huge(1._R_P) ; e_cont = huge(1._R_P) ; e_energy = huge(1._R_P)
    gw = max(1_I4P, cfg_order)
    null_xyz = [.false., .false., null_z]
@@ -444,7 +463,7 @@ contains
    integer(I4P), intent(in)  :: nblk(3), nijk(3) !< Blocks and cells per block per direction.
    logical,      intent(in)  :: null_z  !< 2-D.
    integer(I4P), intent(out) :: iters   !< CG iterations.
-   type(elisha_spectral_solver_object) :: solver !< The solver.
+   class(elisha_spectral_solver_object), allocatable :: solver !< The solver.
    integer(I4P)              :: ncell(3), nbl, b, i, j, k, cc, it(1) !< Sizes, counters.
    real(R_P)                 :: dxyz(3)  !< Spacing.
    logical                   :: null_xyz(3) !< Null directions.
@@ -454,6 +473,7 @@ contains
    real(R_P)                 :: emax, umax, gm(1) !< Errors.
    logical                   :: ok  !< Pass flag.
 
+   call new_fft(solver)
    iters = huge(1_I4P)
    null_xyz = [.false., .false., null_z]
    ncell = nblk * nijk
@@ -547,7 +567,7 @@ contains
    character(*), intent(in)  :: label   !< Configuration label.
    integer(I4P), intent(in)  :: bc(2,3) !< Kinds per face [lo/hi, axis].
    integer(I4P), intent(in)  :: p_      !< Order.
-   type(elisha_spectral_solver_object) :: solver !< The solver.
+   class(elisha_spectral_solver_object), allocatable :: solver !< The solver.
    integer(I4P), parameter   :: NBLK(3)=[2,2,2], NIJK(3)=[4,4,4] !< Blocks and cells per block per direction.
    integer(I4P)              :: ncell(3), nbl, gw, b, i, j, k, ii, jj, kk, cc, ax, side !< Counters.
    integer(I4P)              :: lo(3), hi(3), x(3), it(1) !< A slab, a global cell, CG iterations.
@@ -558,6 +578,7 @@ contains
    real(R_P),    allocatable :: buf(:), out(:) !< Packed source and potential.
    logical                   :: ok  !< Pass flag.
 
+   call new_fft(solver)
    gw = max(p_, 1_I4P)
    ncell = NBLK * NIJK
    dxyz = L / ncell
@@ -678,7 +699,7 @@ contains
    character(*), intent(in) :: label   !< Configuration label.
    integer(I4P), intent(in) :: bc(2,3) !< Kinds per face [lo/hi, axis].
    integer(I4P), intent(in) :: s_      !< Half stencil (order 2 s_).
-   type(elisha_spectral_solver_object) :: solver !< The solver.
+   class(elisha_spectral_solver_object), allocatable :: solver !< The solver.
    integer(I4P), parameter   :: NC=16_I4P   !< Cells per axis.
    character(2), parameter   :: SCHEME(2)=['FD', 'FV'] !< Schemes.
    integer(I4P)              :: p_, sch, nbl, i, j, k, cc !< Order, scheme, counters.
@@ -687,6 +708,7 @@ contains
    integer(I4P)              :: coords(3,1) !< The one block.
    logical                   :: ok          !< Pass flag.
 
+   call new_fft(solver)
    p_ = 2 * s_
    dxyz = L / NC
    allocate(u(1-p_:NC+p_,1-p_:NC+p_,1-p_:NC+p_), f(NC,NC,NC), ph(1-p_:NC+p_,1-p_:NC+p_,1-p_:NC+p_))
@@ -788,13 +810,15 @@ contains
    subroutine check_zero_compact
    !< E2b: the compact operator with zero-ghost faces is the one with ghost-Dirichlet faces (one ghost layer read): equal
    !< solutions, every cell and ghost, bitwise.
-   type(elisha_spectral_solver_object) :: s1, s2 !< The solvers.
+   class(elisha_spectral_solver_object), allocatable :: s1, s2 !< The solvers.
    real(R_P),    allocatable :: buf(:), o1(:), o2(:) !< Source, the two potentials.
    integer(I4P), allocatable :: coords(:,:)          !< This rank's blocks.
    integer(I4P)              :: nbl, i, ndiff(1)     !< Blocks, counter, differing values.
    real(R_P)                 :: dmax(1)              !< Max difference.
    logical                   :: ok                   !< Pass flag.
 
+   call new_fft(s1)
+   call new_fft(s2)
    call round_robin([2,2,2], coords, nbl)
    allocate(buf(max(nbl*512,1)), o1(max(nbl*1000,1)), o2(max(nbl*1000,1)))
    do i=1, size(buf)
@@ -831,11 +855,12 @@ contains
    subroutine check_refusal(name)
    !< A configuration ELISHA must refuse: `initialize_blocks` returns the expected status, the same on every rank.
    character(*), intent(in) :: name !< The refusal (ADAM's flag without --refuse-).
-   type(elisha_spectral_solver_object) :: solver !< The solver.
+   class(elisha_spectral_solver_object), allocatable :: solver !< The solver.
    integer(I4P)              :: expected, st(1), lo(1), hi(1) !< Expected status, status and its range over the ranks.
    logical                   :: ok      !< Pass flag.
    character(:), allocatable :: label, m_ !< Label, message.
 
+   call new_fft(solver)
    select case(name)
    case('mixed-periodic')
       label = 'a periodic face against a Dirichlet one' ; expected = ELISHA_ERR_BC_PERIODIC_PAIR
@@ -1158,4 +1183,35 @@ contains
    write(w, '(F8.3)') x
    s = trim(adjustl(w))
    endfunction fmtf
+   subroutine new_fft(s)
+   !< A spectral solver of the run's backend: the host's, or with --device the cuFFT one (tests-nvf-oac).
+   class(elisha_spectral_solver_object), allocatable, intent(inout) :: s !< Solver.
+
+   if (allocated(s)) deallocate(s)
+#ifdef _CUFFT
+   if (device) then
+      allocate(elisha_spectral_solver_cufft_object :: s)
+      return
+   endif
+#endif
+   allocate(elisha_spectral_solver_object :: s)
+   endsubroutine new_fft
+
+#ifdef _CUFFT
+   subroutine select_device
+   !< --device: each rank on the GPU of its node-local rank modulo the node's GPUs (none: stop).
+   integer :: local_comm, local_rank, nd, ierr_ !< Node communicator, node-local rank, GPUs, MPI error status.
+
+   call MPI_COMM_SPLIT_TYPE(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, local_comm, ierr_)
+   call MPI_COMM_RANK(local_comm, local_rank, ierr_)
+   call MPI_COMM_FREE(local_comm, ierr_)
+   nd = acc_get_num_devices(acc_device_nvidia)
+   if (nd < 1) then
+      print '(A)', 'device run: no NVIDIA GPU visible to this rank'
+      error stop 1
+   endif
+   call acc_set_device_num(mod(local_rank, nd), acc_device_nvidia)
+   call acc_init(acc_device_nvidia)
+   endsubroutine select_device
+#endif
 endprogram elisha_sv_bc_mpi

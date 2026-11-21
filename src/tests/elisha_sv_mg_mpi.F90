@@ -51,9 +51,17 @@ program elisha_sv_mg_mpi
 !< Usage: `mpirun -np N exe/elisha_sv_mg_mpi [--sv9] [--isolated] [--bc] [--sub] [--flail] [--dump DIR]`
 !<        `mpirun -np N exe/elisha_sv_mg_mpi --mixed | --refuse-bc-mismatch | --refuse-bc-mixed-ghost |
 !<         --refuse-boundary-refined | --refuse-flail-ghost-fft | --refuse-flail-isolated-bc | --refuse-flail-wide-amr`
+!< `--device` (only in the device build, `tests-nvf-oac`, `exe-oac/`): the OpenACC hierarchical backend (its root on
+!< cuFFT), the cuFFT spectral one and the facade with both molds, each rank on the GPU of its node-local rank; the same
+!< bounds (the device sums its dots in another order: round-off differences, iterations within one).
 !< Built with `-DELISHA_NO_MPI` it runs on one rank. The FP traps of a debug build are off around `MPI_Init` only.
 #ifndef ELISHA_NO_MPI
 use mpi
+#endif
+#ifdef _CUFFT
+! tests-nvf-oac: the device backends, selected at run time by --device
+use openacc
+use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchical_solver_oac_object
 #endif
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use elisha, only : I4P, I8P, R_P, ELISHA_OK, ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN,                &
@@ -137,10 +145,12 @@ integer(I4P)              :: nrows                       !< Summary rows used.
 integer(I4P)              :: a, stat                     !< Counter, status.
 integer                   :: ierr, world                 !< MPI error status, the world communicator.
 logical                   :: halting(3)                  !< The FP halting modes of the build (debug: on).
+logical                   :: device                      !< --device: the device backends.
 real(R_P)                 :: t0, tl                      !< Wall clock at the start, at a leg's start.
 character(:), allocatable :: msg                         !< Message.
 
 leg = .false. ; refusal = '' ; dump_dir = '' ; nrows = 0
+device = .false.
 a = 0
 do while (a < command_argument_count())
    a = a + 1
@@ -155,6 +165,7 @@ do while (a < command_argument_count())
    case('--dump')
       a = a + 1
       call get_command_argument(a, dump_dir)
+   case('--device')   ; device = .true.
    case default
       if (index(arg, '--refuse-') == 1) then
          refusal = arg(10:)
@@ -173,6 +184,14 @@ call ieee_set_halting_mode(ieee_usual, halting)
 world = MPI_COMM_WORLD
 #else
 halting = .false. ; ierr = 0 ; world = 0
+#endif
+#ifdef _CUFFT
+if (device) call select_device
+#else
+if (device) then
+   print '(A)', 'elisha_sv_mg_mpi: --device needs the device build (tests-nvf-oac)'
+   error stop 2
+endif
 #endif
 call c%init(world, stat, msg)
 if (stat /= ELISHA_OK) then
@@ -326,12 +345,14 @@ contains
    integer(I4P), intent(in) :: nk    !< Cells per block along z.
    integer(I4P), intent(in) :: level !< Uniform level.
    type(grid_t)                        :: gr       !< Grid.
-   type(elisha_hierarchical_solver_object) :: mg   !< Multigrid solver.
-   type(elisha_spectral_solver_object) :: fft      !< Spectral solver.
+   class(elisha_hierarchical_solver_object), allocatable :: mg   !< Multigrid solver.
+   class(elisha_spectral_solver_object), allocatable :: fft      !< Spectral solver.
    real(R_P), allocatable   :: buf(:), phi_mg(:,:,:,:), phi_fft(:,:,:,:) !< Source, fields.
    real(R_P)                :: d(2)  !< Max difference, max |Phi_fft|.
    logical                  :: ok    !< Pass flag.
 
+   call new_mg(mg)
+   call new_fft(fft)
    call build(gr, nk, level, REF_NONE, .false., per_all(nk), stat, msg) ; if (failed('build')) return
    buf = source(gr, SRC_RHO)
    call alloc_phi(gr, phi_mg) ; call alloc_phi(gr, phi_fft)
@@ -362,8 +383,9 @@ contains
    do m=1, 2
       block
       type(grid_t)                            :: gr  !< Grid (a fresh one per level).
-      type(elisha_hierarchical_solver_object) :: mg  !< Solver.
+      class(elisha_hierarchical_solver_object), allocatable :: mg  !< Solver.
       real(R_P), allocatable :: buf(:), phi(:,:,:,:) !< Source, potential.
+      call new_mg(mg)
       call build(gr, nk, levels(m), REF_BOX, .false., per_all(nk), stat, msg) ; if (failed('build')) return
       buf = source(gr, SRC_RHO)
       call alloc_phi(gr, phi)
@@ -411,8 +433,9 @@ contains
    do m=1, 2
       block
       type(grid_t)                            :: gr  !< Grid.
-      type(elisha_hierarchical_solver_object) :: mg  !< Solver.
+      class(elisha_hierarchical_solver_object), allocatable :: mg  !< Solver.
       real(R_P), allocatable :: buf(:), phi(:,:,:,:), ghost(:) !< Source, potential, ghost values.
+      call new_mg(mg)
       call build(gr, nk, levels(m), merge(REF_BOX, REF_NONE, amr), .false., [.false., .false., .false.], stat, msg)
       if (failed('build')) return
       buf = source(gr, SRC_RHO_DEV) ! the exact potential solves lap Phi = factor (rho - rho0)
@@ -467,9 +490,11 @@ contains
    do m=1, 2
       block
       type(grid_t)                            :: gr  !< Grid.
-      type(elisha_hierarchical_solver_object) :: mg  !< Solver.
-      type(elisha_spectral_solver_object)     :: fft !< Spectral solver (uniform grids).
+      class(elisha_hierarchical_solver_object), allocatable :: mg  !< Solver.
+      class(elisha_spectral_solver_object), allocatable :: fft !< Spectral solver (uniform grids).
       real(R_P), allocatable :: buf(:), phi(:,:,:,:), phi_fft(:,:,:,:), x(:), y(:), ux(:), uy(:) !< Fields, vectors.
+      call new_mg(mg)
+      call new_fft(fft)
       call build(gr, 8_I4P, levels(m), merge(REF_STAR, REF_NONE, amr), .true., [.false., .false., .false.], stat, msg)
       if (failed('build')) return
       buf = source(gr, SRC_STAR, prof)
@@ -541,12 +566,14 @@ contains
    integer(I4P), intent(in) :: nk      !< Cells per block along z.
    integer(I4P), intent(in) :: level   !< Uniform level.
    type(grid_t)                            :: gr  !< Grid.
-   type(elisha_hierarchical_solver_object) :: mg  !< Multigrid solver.
-   type(elisha_spectral_solver_object)     :: fft !< Spectral solver.
+   class(elisha_hierarchical_solver_object), allocatable :: mg  !< Multigrid solver.
+   class(elisha_spectral_solver_object), allocatable :: fft !< Spectral solver.
    real(R_P), allocatable   :: buf(:), phi_mg(:,:,:,:), phi_fft(:,:,:,:) !< Source, fields.
    real(R_P)                :: d(2)    !< Max difference, max |Phi_fft|.
    logical                  :: ok      !< Pass flag.
 
+   call new_mg(mg)
+   call new_fft(fft)
    call build(gr, nk, level, REF_NONE, .false., per_bc(bc, nk), stat, msg) ; if (failed('build')) return
    buf = source(gr, SRC_RHO)
    call alloc_phi(gr, phi_mg) ; call alloc_phi(gr, phi_fft)
@@ -581,9 +608,10 @@ contains
    do m=1, 2
       block
       type(grid_t)                            :: gr  !< Grid.
-      type(elisha_hierarchical_solver_object) :: mg  !< Solver.
+      class(elisha_hierarchical_solver_object), allocatable :: mg  !< Solver.
       real(R_P), allocatable :: buf(:), phi(:,:,:,:), ghost(:), pe(:), ye(:), yb(:) !< Fields, vectors.
       real(R_P)              :: cdx(3) !< Cell spacing.
+      call new_mg(mg)
       call build(gr, nk, levels(m), REF_CORNER, .false., per_bc(bc, nk), stat, msg) ; if (failed('build')) return
       buf = source(gr, SRC_LAPM)
       call alloc_phi(gr, phi)
@@ -687,12 +715,13 @@ contains
    integer(I4P), intent(in), optional :: bc(2,3)  !< Kinds per face (default periodic).
    logical,      intent(in), optional :: isolated !< Isolated boundaries (the star's cube).
    type(grid_t)                            :: gr    !< Grid.
-   type(elisha_hierarchical_solver_object) :: mg(2) !< Solvers: the levels forced, none.
+   class(elisha_hierarchical_solver_object), allocatable :: mg(:) !< Solvers: the levels forced, none.
    real(R_P), allocatable :: buf(:), phi(:,:,:,:,:) !< Source, the two potentials.
    real(R_P)              :: d(2)  !< max |Phi_sub - Phi_exact|, max |Phi_exact|.
    integer(I4P)           :: its(2), nsub_expected, s, b, i, j, k !< Iterations, levels, counters.
    logical                :: iso, ok  !< Isolated, pass flag.
 
+   call new_mg2(mg)
    iso = .false. ; if (present(isolated)) iso = isolated
    if (iso) then
       call build(gr, 8_I4P, level, merge(REF_STAR, REF_NONE, amr), .true., [.false., .false., .false.], stat, msg)
@@ -762,20 +791,22 @@ contains
    integer(I4P), intent(in), optional :: dg_order !< The wide D(G) of this order (spectral path), else compact.
    type(grid_t)                            :: gr  !< Grid.
    type(elisha_solver_object)              :: fl  !< The facade.
-   type(elisha_hierarchical_solver_object) :: mg  !< Multigrid solver, direct.
-   type(elisha_spectral_solver_object)     :: fft !< Spectral solver, direct.
+   class(elisha_hierarchical_solver_object), allocatable :: mg  !< Multigrid solver, direct.
+   class(elisha_spectral_solver_object), allocatable :: fft !< Spectral solver, direct.
    real(R_P),    allocatable :: buf(:), phi_f(:,:,:,:), phi_d(:,:,:,:), ghost_f(:), ghost_d(:), x(:,:) !< Fields.
    integer(I4P), allocatable :: kinds(:), dir(:) !< The facade's boundary faces.
    integer(I4P)              :: ndiff(1), i      !< Values that differ, counter.
    logical                   :: ok               !< Pass flag.
    character(:), allocatable :: note             !< The direct hierarchical solve's convergence (reported).
 
+   call new_mg(mg)
+   call new_fft(fft)
    note = ''
    call build(gr, nk, level, merge(REF_CORNER, REF_NONE, amr), .false., per_bc(bc, nk), stat, msg)
    if (failed('build')) return
    buf = source(gr, SRC_RHO)
    call alloc_phi(gr, phi_f) ; call alloc_phi(gr, phi_d)
-   call fl%setup(gr%mesh, c, stat, msg, bc=bc, dg_order=dg_order) ; if (failed('facade setup')) return
+   call fl_setup(fl, gr%mesh, stat, msg, bc=bc, dg_order=dg_order) ; if (failed('facade setup')) return
    ok = fl%is_hierarchical() .eqv. amr
    if (amr) then
       call mg%setup(gr%mesh, c, stat, msg, bc=bc) ; if (failed('mg setup')) return
@@ -837,7 +868,7 @@ contains
    phi_v = SENTINEL
    ok = .true.
    do cc=1, 3
-      call fl(cc)%setup(gr%mesh, c, stat, msg, bc=bcv(:,:,cc)) ; if (failed('facade setup')) return
+      call fl_setup(fl(cc), gr%mesh, stat, msg, bc=bcv(:,:,cc)) ; if (failed('facade setup')) return
       ok = ok .and. (fl(cc)%is_hierarchical() .eqv. amr)
    enddo
    do cc=1, 3 ! the factor differs per component: three distinct problems from one source
@@ -847,7 +878,7 @@ contains
    ndiff = 0
    do cc=1, 3
       phi_1 = SENTINEL
-      call one%setup(gr%mesh, c, stat, msg, bc=bcv(:,:,cc)) ; if (failed('facade setup (alone)')) return
+      call fl_setup(one, gr%mesh, stat, msg, bc=bcv(:,:,cc)) ; if (failed('facade setup (alone)')) return
       call one%solve_packed(gr%mesh, buf, FACTOR * cc, phi_1, stat, msg) ; if (failed('facade solve (alone)')) return
       call one%destroy
       ndiff = ndiff + bits_differ(phi_v(:,:,:,:,cc), phi_1)
@@ -867,13 +898,14 @@ contains
    !< A configuration ELISHA must refuse: the expected status, the same on every rank.
    character(*), intent(in) :: name !< The refusal (ADAM's flag without --refuse-).
    type(grid_t)                            :: gr  !< Grid.
-   type(elisha_hierarchical_solver_object) :: mg  !< Multigrid solver.
+   class(elisha_hierarchical_solver_object), allocatable :: mg  !< Multigrid solver.
    type(elisha_solver_object)              :: fl  !< The facade.
    real(R_P), allocatable :: buf(:), phi(:,:,:,:) !< Source, potential.
    integer(I4P)           :: expected, st(1), lo(1), hi(1) !< Expected status, status and its range over the ranks.
    logical                :: ok   !< Pass flag.
    character(:), allocatable :: label, m_ !< Label, message.
 
+   call new_mg(mg)
    st = ELISHA_OK
    select case(name)
    case('mixed') ! a grid periodic along x only, no bc
@@ -895,7 +927,7 @@ contains
    case('flail-ghost-fft') ! boundary values on the spectral path (a uniform grid bounded along z)
       label = 'facade, boundary values on the spectral path' ; expected = ELISHA_ERR_GHOST_VALUES
       call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., per_bc(BC_PEC_XY, 8_I4P), st(1), m_)
-      if (st(1) == ELISHA_OK) call fl%setup(gr%mesh, c, st(1), m_, bc=BC_PEC_XY)
+      if (st(1) == ELISHA_OK) call fl_setup(fl, gr%mesh, st(1), m_, bc=BC_PEC_XY)
       if (st(1) == ELISHA_OK) then
          buf = source(gr, SRC_RHO)
          call alloc_phi(gr, phi)
@@ -904,11 +936,11 @@ contains
    case('flail-isolated-bc') ! isolated with bc
       label = 'facade, isolated with bc' ; expected = ELISHA_ERR_ISOLATED_BC
       call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., [.false., .false., .false.], st(1), m_)
-      if (st(1) == ELISHA_OK) call fl%setup(gr%mesh, c, st(1), m_, isolated=.true., bc=BC_B)
+      if (st(1) == ELISHA_OK) call fl_setup(fl, gr%mesh, st(1), m_, isolated=.true., bc=BC_B)
    case('flail-wide-amr') ! the wide operator on AMR (the corner refined)
       label = 'facade, the wide D(G) on AMR' ; expected = ELISHA_ERR_DG_AMR
       call build(gr, 8_I4P, 2_I4P, REF_CORNER, .false., per_bc(BC_B, 8_I4P), st(1), m_)
-      if (st(1) == ELISHA_OK) call fl%setup(gr%mesh, c, st(1), m_, bc=BC_B, dg_order=4_I4P)
+      if (st(1) == ELISHA_OK) call fl_setup(fl, gr%mesh, st(1), m_, bc=BC_B, dg_order=4_I4P)
    endselect
    lo = st ; hi = st
    call c%min_i4(lo, stat) ; call c%max_i4(hi, stat)
@@ -928,7 +960,7 @@ contains
    function symmetry(gr, mg) result(sym)
    !< The operator's symmetry defect for ADAM's two pseudo-random vectors (they depend on the rank and the local order).
    type(grid_t),                            intent(in)    :: gr  !< Grid.
-   type(elisha_hierarchical_solver_object), intent(inout) :: mg  !< Solver.
+   class(elisha_hierarchical_solver_object), intent(inout) :: mg  !< Solver.
    real(R_P)                                              :: sym !< Defect.
    real(R_P), allocatable :: x(:), y(:) !< Vectors.
    integer(I4P)           :: i, nl      !< Counters.
@@ -948,7 +980,7 @@ contains
    !< leaves per unit volume. Dirichlet: A Phi_exact + B g with the ghost values g, against V 4 pi G (rho - mean), the
    !< mean `source_mean` (the source is rho - rho0 already).
    type(grid_t),                            intent(in)    :: gr   !< Grid.
-   type(elisha_hierarchical_solver_object), intent(inout) :: mg   !< Solver.
+   class(elisha_hierarchical_solver_object), intent(inout) :: mg   !< Solver.
    real(R_P),                               intent(out)   :: tmax !< Max truncation.
    real(R_P), optional,                     intent(in)    :: ghost(1:)   !< Dirichlet: the ghost values.
    real(R_P), optional,                     intent(in)    :: source_mean !< The mean subtracted from rho (default rho0).
@@ -1687,4 +1719,85 @@ contains
    write(w, '(F8.3)') x
    s = trim(adjustl(w))
    endfunction fmtf
+   subroutine new_fft(s)
+   !< A spectral solver of the run's backend: the host's, or with --device the cuFFT one (tests-nvf-oac).
+   class(elisha_spectral_solver_object), allocatable, intent(inout) :: s !< Solver.
+
+   if (allocated(s)) deallocate(s)
+#ifdef _CUFFT
+   if (device) then
+      allocate(elisha_spectral_solver_cufft_object :: s)
+      return
+   endif
+#endif
+   allocate(elisha_spectral_solver_object :: s)
+   endsubroutine new_fft
+
+   subroutine new_mg(s)
+   !< A hierarchical solver of the run's backend: the host's, or with --device the OpenACC one (its root on cuFFT).
+   class(elisha_hierarchical_solver_object), allocatable, intent(inout) :: s !< Solver.
+
+   if (allocated(s)) deallocate(s)
+#ifdef _CUFFT
+   if (device) then
+      allocate(elisha_hierarchical_solver_oac_object :: s)
+      return
+   endif
+#endif
+   allocate(elisha_hierarchical_solver_object :: s)
+   endsubroutine new_mg
+
+   subroutine new_mg2(s)
+   !< Two hierarchical solvers of the run's backend (see new_mg).
+   class(elisha_hierarchical_solver_object), allocatable, intent(inout) :: s(:) !< Solvers.
+
+   if (allocated(s)) deallocate(s)
+#ifdef _CUFFT
+   if (device) then
+      allocate(elisha_hierarchical_solver_oac_object :: s(2))
+      return
+   endif
+#endif
+   allocate(elisha_hierarchical_solver_object :: s(2))
+   endsubroutine new_mg2
+
+   subroutine fl_setup(fl, mesh, st, m_, isolated, bc, dg_order)
+   !< The facade's setup on the run's backend: with --device the cuFFT and OpenACC molds.
+   type(elisha_solver_object), intent(inout)         :: fl          !< The facade.
+   type(elisha_mesh_object),   intent(inout)         :: mesh        !< Mesh.
+   integer(I4P),               intent(out)           :: st          !< Status.
+   character(:), allocatable,  intent(out)           :: m_          !< Message.
+   logical,                    intent(in),  optional :: isolated    !< Isolated boundaries.
+   integer(I4P),               intent(in),  optional :: bc(2,3)     !< Kinds per face.
+   integer(I4P),               intent(in),  optional :: dg_order    !< The wide D(G) order.
+#ifdef _CUFFT
+   type(elisha_spectral_solver_cufft_object)   :: sm !< The spectral mold.
+   type(elisha_hierarchical_solver_oac_object) :: hm !< The hierarchical mold.
+
+   if (device) then
+      call fl%setup(mesh, c, st, m_, isolated=isolated, bc=bc, dg_order=dg_order, spectral_mold=sm, &
+                    hierarchical_mold=hm)
+      return
+   endif
+#endif
+   call fl%setup(mesh, c, st, m_, isolated=isolated, bc=bc, dg_order=dg_order)
+   endsubroutine fl_setup
+
+#ifdef _CUFFT
+   subroutine select_device
+   !< --device: each rank on the GPU of its node-local rank modulo the node's GPUs (none: stop).
+   integer :: local_comm, local_rank, nd, ierr_ !< Node communicator, node-local rank, GPUs, MPI error status.
+
+   call MPI_COMM_SPLIT_TYPE(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, local_comm, ierr_)
+   call MPI_COMM_RANK(local_comm, local_rank, ierr_)
+   call MPI_COMM_FREE(local_comm, ierr_)
+   nd = acc_get_num_devices(acc_device_nvidia)
+   if (nd < 1) then
+      print '(A)', 'device run: no NVIDIA GPU visible to this rank'
+      error stop 1
+   endif
+   call acc_set_device_num(mod(local_rank, nd), acc_device_nvidia)
+   call acc_init(acc_device_nvidia)
+   endsubroutine select_device
+#endif
 endprogram elisha_sv_mg_mpi
