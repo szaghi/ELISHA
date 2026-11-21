@@ -54,9 +54,18 @@ call solver%solve_packed(mesh, buf, factor, phi, stat, errmsg, on_device=.true.)
 
 The right-hand side (its sums) and the ghost fill stay on the host, in the host's order, which keeps the results
 bitwise. The backend therefore copies the source to a host copy of its own (the client's `buf` is not touched) and
-brings `phi` to the host and back around the solve. The option saves the client its host mirror and its own copies,
-not the per-solve transfers: the gain is the root's, at every V-cycle. A host solver given `on_device=.true.` returns
-`ELISHA_ERR_ARGUMENT`.
+brings `phi`, every ghost layer included, to the host and back around the solve. The option saves the client its
+host mirror and its own copies. It does not save the per-solve transfers; it adds them. A host solver given
+`on_device=.true.` returns `ELISHA_ERR_ARGUMENT`.
+
+**`on_device` is slower than host arrays today.** The scaling ladder (job 1369163, A30) measured it at level 4 with 3
+ghost layers. The multigrid with 3 932 160 cells is 9 to 24% slower at np 1 and 2: 0.320 s against 0.258 s periodic
+and 0.707 s against 0.649 s isolated at np 1. The FFT with 2 097 152 cells is 18 to 51% slower: 0.084 s against
+0.056 s periodic at np 1. The extra time is the staging. For the multigrid at np 1 that is about 370 MB per solve,
+the source plus `phi` both ways, which matches the 0.062 s difference at about 6 GB/s. The cost per rank shrinks as
+the ranks grow (+13% for the multigrid periodic at np 4). Pass host arrays unless the data already lives on the
+device and a host mirror is not wanted. The option pays off only once the right-hand side and the ghost fill run on
+the device. [Performance, Scaling (EB)](./performance#device-a30-job-1369163) has every row.
 
 `src/tests/device/elisha_test_device_api_mpi` solves each case three ways: ADAM FNL, ELISHA with host arrays, and
 ELISHA with `on_device`. The cases are hierarchical (periodic, ghost-Dirichlet and D/N roots, isolated), spectral, and
@@ -70,6 +79,7 @@ residual.
 | `static-nvf-oac` | The library with the device backends (target `src/device/elisha_device.F90`): `-acc -gpu=$GPU_CC -cudalib=cufft -D_CUFFT` |
 | `tests-nvf-oac` | Every test, plus the device tests in `src/tests/device/`, into `exe-oac/` |
 | `bench-nvf-oac` | The device benchmark against ADAM's device solvers, into `exe-bench-oac/` |
+| `bench-ladder-nvf-oac` | The scaling ladders on the device backends (ELISHA alone), into `exe-bench-oac/` |
 
 The device sources live in `src/device/`, a sibling of `src/lib/`, so that the host modes and fpm never compile
 them. The compute capability comes from `--varset`: `cc80`, `cc89`, `cc90`, or `iac` (cc80 with CUDA 12.9, for

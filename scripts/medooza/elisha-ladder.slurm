@@ -87,7 +87,7 @@ OUT=$RUN/bench.txt
 {
    echo "job $JOB on $(hostname), $(date -Is), ladders: $LADDERS, toolchain $TC, reps $REPS"
    echo "source $SRC ($(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo 'no git')), run $RUN"
-   echo "cores $(nproc), memory $(free -g | awk '/^Mem:/ {print $2}') GiB, $(lscpu | sed -n 's/^Model name: *//p')"
+   echo "cores ${SLURM_CPUS_ON_NODE:-$(nproc)}, memory $(free -g | awk '/^Mem:/ {print $2}') GiB, $(lscpu | sed -n 's/^Model name: *//p')"
    mpif90 --version 2>/dev/null | grep -m1 -E "nvfortran|GNU Fortran"
    mpirun --version 2>/dev/null | head -1
    [ $fnl -eq 1 ] && nvidia-smi --query-gpu=index,name,driver_version,memory.free --format=csv,noheader
