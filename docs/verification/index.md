@@ -73,9 +73,9 @@ hierarchical ones (`phi-mg-*.bin`) are FCG solutions stopped at a relative resid
 dots in different orders and stop at different iterates within that tolerance, so they are compared at $10^{-8}$, the
 bound of the device oracle test.
 
-CPU = device, job 1369178 (medooza, A30): every host leg passes; every device leg passes except `sub` (a crash in the
-device library, under repair). The 13 spectral dumps agree within $8.93\cdot10^{-16}$, the 18 hierarchical ones within
-$7.85\cdot10^{-12}$.
+CPU = device, job 1369211 (medooza, A30; the symmetric V-cycle): every host and every device leg passes at np 1, 2
+and 3, `sub` included. The 13 spectral dumps agree within $8.93\cdot10^{-16}$, the 18 hierarchical ones within
+$6.42\cdot10^{-12}$.
 
 ## Figures and prototypes
 

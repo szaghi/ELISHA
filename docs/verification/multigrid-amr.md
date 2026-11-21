@@ -80,10 +80,10 @@ The symmetry defects depend on the rank and on the leaves' order (the two vector
 indexed by the local cell), so they differ from ADAM's in the digits and across rank counts; every other number above
 is the same on 1, 2 and 3 ranks, up to round-off in the last digit of the round-off-level ones.
 
-CPU = device (job 1369178): the 18 hierarchical dumps (SV-9, SV-12, SV-13 grids) agree with the host's within
-$7.85\cdot10^{-12}$. These are FCG solutions stopped at a relative residual of $10^{-10}$, so host and device agree
-to about that tolerance, not to round-off: the bound is $10^{-8}$ (the device oracle test's), against $10^{-13}$ for
-the direct spectral solves. Every device leg passed but `sub`, a crash in the device library under repair.
+CPU = device (job 1369211, the symmetric V-cycle): the 18 hierarchical dumps (SV-9, SV-12, SV-13 grids) agree with
+the host's within $6.42\cdot10^{-12}$. These are FCG solutions stopped at a relative residual of $10^{-10}$, so host
+and device agree to about that tolerance, not to round-off: the bound is $10^{-8}$ (the device oracle test's), against
+$10^{-13}$ for the direct spectral solves. Every device leg passes at np 1, 2 and 3, `sub` included.
 
 ## Commands
 

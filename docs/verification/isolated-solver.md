@@ -58,7 +58,7 @@ ELISHA (gfortran 16.2, np 2; the same on np 1 and 3) next to ADAM's documented n
 | ghost cells unfilled | 0 | 0 | 0 |
 | a periodic grid; non-cubic cells; 2-D | refused | `ELISHA_ERR_ISOLATED_PERIODIC`; `_ISOLATED_CELLS`; `_ISOLATED_DIMENSION` | refused (stop) |
 
-CPU = device: the padded arrays of job 1369178 are among the 13 spectral dumps that agree with the host's within
+CPU = device: the padded arrays of job 1369211 are among the 13 spectral dumps that agree with the host's within
 $8.93\cdot10^{-16}$.
 
 ## Commands

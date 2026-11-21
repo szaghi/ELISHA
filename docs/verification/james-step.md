@@ -51,7 +51,7 @@ ELISHA (gfortran 16.2, np 2) next to ADAM's documented numbers (`multigrid-amr.m
 | a refined leaf on the boundary | refused | `ELISHA_ERR_ISOLATED_BOUNDARY_LEAF` | refused (stop) |
 
 The symmetry defect depends on the rank and the leaves' order (ADAM's pseudo-random vectors), the other numbers are
-the same on 1, 2 and 3 ranks. CPU = device: see [the multigrid page](./multigrid-amr#results) (job 1369178).
+the same on 1, 2 and 3 ranks. CPU = device: see [the multigrid page](./multigrid-amr#results) (job 1369211).
 
 ## Commands
 

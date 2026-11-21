@@ -64,7 +64,7 @@ ELISHA's numbers (gfortran 16.2, np 2; the same on np 1 and 3) next to ADAM's do
 | a grid without periodic boundaries | refused | `ELISHA_ERR_BC_MISSING` | refused (stop) |
 
 nvfortran gives the same continuum errors and orders; its round-off numbers differ in the last digits (discrete error
-$\le 2.73\cdot10^{-15}$, residual $\le 3.79\cdot10^{-14}$). CPU = device: the 13 spectral dumps of job 1369178 agree
+$\le 2.73\cdot10^{-15}$, residual $\le 3.79\cdot10^{-14}$). CPU = device: the 13 spectral dumps of job 1369211 agree
 with the host's within $8.93\cdot10^{-16}$ ([the harness](./#the-harness)).
 
 ## Commands
