@@ -21,11 +21,25 @@ export default withMermaid({
     nav: [
       { text: 'Home',   link: '/' },
       { text: 'Guide',  link: '/guide/' },
+      { text: 'Verification', link: '/verification/' },
       { text: 'GitHub', link: 'https://github.com/szaghi/ELISHA' },
     ],
 
     // Add your guide pages here.
     sidebar: {
+      '/verification/': [
+        {
+          text: 'Verification',
+          items: [
+            { text: 'Overview: drivers, harness, device', link: '/verification/' },
+            { text: 'SV-2 The spectral solver, periodic', link: '/verification/fft-poisson' },
+            { text: 'SV-6 The spectral solver, isolated', link: '/verification/isolated-solver' },
+            { text: 'SV-9, SV-12 The hierarchical solver on AMR', link: '/verification/multigrid-amr' },
+            { text: 'SV-13 The James step', link: '/verification/james-step' },
+            { text: 'Face kinds and the wide D(G)', link: '/verification/face-kinds' },
+          ],
+        },
+      ],
       '/guide/': [
         {
           text: 'Introduction',

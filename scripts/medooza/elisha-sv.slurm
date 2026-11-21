@@ -8,9 +8,10 @@
 # and everything runs from the run directory on /ifs (ELISHA_RUN, default /ifs/hpc/home/szaghi/elisha-tests/sv-<job>):
 #   build-<mode>.log, legs-host.log, legs-device.log, work-host/ and work-device/ (every driver log), dump-host/ and
 #   dump-device/ (the potentials), compare.txt, summary.txt.
-# The host = device comparison, scripts/verification/poisson_oracle.py compare dump-host dump-device (numpy), runs on
-# the node when ELISHA_PY (default python3) imports numpy; otherwise summary.txt says so, and the comparison is made on
-# the workstation after copying the two dump directories back (rsync -a medooza:$RUN/dump-{host,device} .).
+# The host = device comparison, scripts/verification/poisson.sh --compare dump-host dump-device (numpy: the spectral
+# dumps at 1e-13, the hierarchical ones at 1e-8), runs on the node when ELISHA_PY (default python3) imports numpy;
+# medooza's nodes have none (gnode01, job 1369178), so summary.txt says so and the comparison is made on the workstation
+# after copying the two dump directories back (rsync -a medooza:$RUN/dump-{host,device} .).
 # Submit from the login node (only sbatch runs there), e.g.
 #
 #   sbatch --export=ALL,ELISHA_SRC=/home/szaghi/elisha-ev scripts/medooza/elisha-sv.slurm
@@ -80,16 +81,19 @@ for side in $SIDES; do
    grep -E '^>>|refusal|slab:|dump:|FAIL|PASSED|FAILED' "$RUN/legs-$side.log" | sed "s/^/   $side: /" >> "$RUN/summary.txt"
 done
 if [ -d "$RUN/dump-host" ] && [ -d "$RUN/dump-device" ]; then
+   # poisson.sh --compare: the spectral dumps at 1e-13 (direct solves), the hierarchical ones at 1e-8 (FCG solutions
+   # stopped at 1e-10: two builds agree to about the tolerance, not to round-off; see poisson.sh's header)
    if "$PY" -I -c 'import numpy' 2> /dev/null; then
-      if "$PY" -I "$SRC/scripts/verification/poisson_oracle.py" compare "$RUN/dump-host" "$RUN/dump-device" \
+      if PYTHON="$PY" bash "$SRC/scripts/verification/poisson.sh" --compare "$RUN/dump-host" "$RUN/dump-device" \
             > "$RUN/compare.txt" 2>&1; then
          echo "PASS  host = device ($(tail -1 "$RUN/compare.txt"))" | tee -a "$RUN/summary.txt"
       else
          echo "FAIL  host = device: see $RUN/compare.txt" | tee -a "$RUN/summary.txt"; status=1
       fi
    else
-      echo "NOTE  no numpy for $PY on $(hostname): compare dump-host and dump-device on the workstation" \
-           "(scripts/verification/poisson_oracle.py compare)" | tee -a "$RUN/summary.txt"
+      { echo "NOTE  no numpy for $PY on $(hostname) (medooza's nodes have none): the host = device comparison runs on"
+        echo "      the workstation: rsync -a medooza:$RUN/dump-{host,device} . &&"
+        echo "      scripts/verification/poisson.sh --compare dump-host dump-device"; } | tee -a "$RUN/summary.txt"
    fi
 fi
 if [ $status -eq 0 ] && grep -q '^PASS' "$RUN/summary.txt"; then echo "all passed" | tee -a "$RUN/summary.txt"; else

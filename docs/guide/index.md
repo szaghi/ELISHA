@@ -26,7 +26,9 @@ reproduce every ADAM refusal as a status code:
   backends](./device) (cuFFT, OpenACC);
 - [the solver facade](./solver), `elisha_solver_object`, which chooses the path for the mesh, and its diagnostics.
 
-The [Quick Start](./quickstart) and the [Examples](./examples) are programs that CI compiles and runs.
+The [Quick Start](./quickstart) and the [Examples](./examples) are programs that CI compiles and runs. The
+[Verification](/verification/) pages check the solvers against analytic and discrete solutions (ADAM's FLAIL
+verification, moved to ELISHA).
 [Coming from ADAM's FLAIL](./from-adam) maps a FLAIL client onto ELISHA. The performance milestone (M7) is done:
 five changes, each measured on its own, all bitwise ADAM's except the stencil level operators
 with nvfortran on the host, where they are an option ([Performance](./performance)). Next is M8, wiring ELISHA into ADAM, which is the owner's call.

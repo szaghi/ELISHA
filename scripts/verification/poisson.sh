@@ -31,11 +31,19 @@
 # `--dump DIR` also runs elisha_sv_fft_mpi (every SV-2 and SV-6 level) and elisha_sv_mg_mpi --sv9 --isolated (every
 # SV-9, SV-12 and SV-13 grid) at np 2 with --dump DIR: run it once per build (the host one and, with --device, the
 # device one), then compare the two directories with
-#   scripts/verification/poisson_oracle.py compare DIR_HOST DIR_DEVICE      (max |phi_A - phi_B| / max |phi_A|, 1e-13)
+#   scripts/verification/poisson.sh --compare DIR_HOST DIR_DEVICE      (max |phi_A - phi_B| / max |phi_A|, below)
 # `--device` runs every driver with --device (the cuFFT and OpenACC backends, the device build tests-nvf-oac) and makes
 # exe-oac/ the default executable directory.
 #
+# `--compare DIR_A DIR_B` runs no leg: it compares two dump directories (poisson_oracle.py compare, numpy; PYTHON,
+# default python3) with one bound per solver. The spectral dumps (phi-r*.bin) are direct solves: two builds agree to
+# round-off, 1e-13 (ADAM's bound). The hierarchical dumps (phi-mg-*.bin) are FCG solutions stopped at a relative
+# max-norm residual of 1e-10 (1e-12 for SV-13): two builds, whose dots sum in different orders, stop at different
+# iterates within that tolerance, so the potentials agree to about it times the conditioning, not to round-off; the
+# bound is 1e-8, the device oracle test's for the multigrid (measured host against device: 7.9e-12).
+#
 # Usage: scripts/verification/poisson.sh [--np-list "1 2 3"] [--legs LIST] [--dump DIR] [--device] [--work DIR] [--keep]
+#        scripts/verification/poisson.sh --compare DIR_A DIR_B
 #        LIST: sv2, sv6, slab, sv9, sv13, bc, bcmg, flail, sub or all (default all), space or comma separated
 # Environment: ELISHA_EXE_DIR (default exe/, exe-oac/ with --device), and per driver POISSON_EXE (elisha_sv_fft_mpi),
 # POISSON_MG_EXE (elisha_sv_mg_mpi), POISSON_BC_EXE (elisha_sv_bc_mpi); LAUNCH, the launcher before the rank count
@@ -52,6 +60,7 @@ DUMP=""
 DEVICE=0
 WORK=""
 KEEP=0
+COMPARE=()
 while [[ $# -gt 0 ]]; do
    case "$1" in
       --np-list) NP_LIST="$2" ; shift 2 ;;
@@ -60,10 +69,23 @@ while [[ $# -gt 0 ]]; do
       --device)  DEVICE=1 ; shift ;;
       --work)    WORK="$2" ; shift 2 ;;
       --keep)    KEEP=1 ; shift ;;
+      --compare) COMPARE=("$2" "$3") ; shift 3 ;;
       *) echo "poisson.sh: unknown argument '$1' (accepted: --np-list LIST, --legs LIST, --dump DIR, --device," \
-              "--work DIR, --keep)" >&2 ; exit 2 ;;
+              "--work DIR, --keep, --compare DIR_A DIR_B)" >&2 ; exit 2 ;;
    esac
 done
+if [[ ${#COMPARE[@]} -eq 2 ]]; then # the two bounds: see the header
+   oracle=("${PYTHON:-python3}" -I "$REPO_ROOT/scripts/verification/poisson_oracle.py" compare "${COMPARE[@]}")
+   status=0
+   "${oracle[@]}" --pattern 'phi-r*.bin' --tol 1e-13 || status=1  # spectral: direct solves
+   "${oracle[@]}" --pattern 'phi-mg-*.bin' --tol 1e-8 || status=1 # hierarchical: FCG to 1e-10
+   if [[ $status -eq 0 ]]; then
+      echo "compare: PASSED (spectral 1e-13, hierarchical 1e-8)"
+   else
+      echo "compare: FAILED"
+   fi
+   exit $status
+fi
 [[ "$LEGS" == "all" ]] && LEGS="$ALL_LEGS"
 for leg in $LEGS; do
    [[ " $ALL_LEGS " == *" $leg "* ]] || { echo "poisson.sh: unknown leg '$leg' (legs: $ALL_LEGS, all)" >&2 ; exit 2 ; }

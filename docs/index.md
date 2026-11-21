@@ -10,6 +10,9 @@ hero:
       text: Guide
       link: /guide/
     - theme: alt
+      text: Verification
+      link: /verification/
+    - theme: alt
       text: API Reference
       link: /api/
     - theme: alt
