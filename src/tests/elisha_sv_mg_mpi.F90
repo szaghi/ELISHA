@@ -134,6 +134,15 @@ type :: grid_t
    integer(I4P), allocatable :: gid(:)                   !< This rank's blocks: their leaf ids [nb].
 endtype grid_t
 
+type :: mg_box
+   !< One hierarchical solver of the run's backend. check_sub keeps two in an array of this box, not in a polymorphic
+   !< array `class(elisha_hierarchical_solver_object), allocatable :: mg(:)`: nvfortran 26.9 corrupts the automatic (and
+   !< the explicit) deallocation of such an array when its dynamic type adds components (the OpenACC solver's), a
+   !< segfault in pgf90_dealloc_mbr03a_i8 (medooza job 1369178, --sub --device; reproduced on the host with a one-logical
+   !< extension; gfortran is clean). The library has no polymorphic arrays.
+   class(elisha_hierarchical_solver_object), allocatable :: s !< The solver.
+endtype mg_box
+
 type(elisha_comm_object)  :: c                           !< Communication context (the world).
 logical                   :: test_passed                 !< Aggregate pass flag.
 logical                   :: leg(5)                      !< Legs to run: sv9, isolated, bc, sub, flail.
@@ -715,13 +724,13 @@ contains
    integer(I4P), intent(in), optional :: bc(2,3)  !< Kinds per face (default periodic).
    logical,      intent(in), optional :: isolated !< Isolated boundaries (the star's cube).
    type(grid_t)                            :: gr    !< Grid.
-   class(elisha_hierarchical_solver_object), allocatable :: mg(:) !< Solvers: the levels forced, none.
+   type(mg_box)           :: mg(2) !< Solvers: the levels forced, none (see mg_box).
    real(R_P), allocatable :: buf(:), phi(:,:,:,:,:) !< Source, the two potentials.
    real(R_P)              :: d(2)  !< max |Phi_sub - Phi_exact|, max |Phi_exact|.
    integer(I4P)           :: its(2), nsub_expected, s, b, i, j, k !< Iterations, levels, counters.
    logical                :: iso, ok  !< Isolated, pass flag.
 
-   call new_mg2(mg)
+   call new_mg(mg(1)%s) ; call new_mg(mg(2)%s)
    iso = .false. ; if (present(isolated)) iso = isolated
    if (iso) then
       call build(gr, 8_I4P, level, merge(REF_STAR, REF_NONE, amr), .true., [.false., .false., .false.], stat, msg)
@@ -740,18 +749,18 @@ contains
    phi = 0._R_P
    do s=1, 2
       if (iso) then
-         call mg(s)%setup(gr%mesh, c, stat, msg, tolerance=TOL_ISOLATED, max_iterations=MAX_ITERATIONS, &
+         call mg(s)%s%setup(gr%mesh, c, stat, msg, tolerance=TOL_ISOLATED, max_iterations=MAX_ITERATIONS, &
                           isolated=.true., root_cells=merge(1_I4P, huge(1_I4P), s == 1))
       elseif (present(bc)) then
-         call mg(s)%setup(gr%mesh, c, stat, msg, max_iterations=MAX_ITERATIONS, bc=bc, &
+         call mg(s)%s%setup(gr%mesh, c, stat, msg, max_iterations=MAX_ITERATIONS, bc=bc, &
                           root_cells=merge(1_I4P, huge(1_I4P), s == 1))
       else
-         call mg(s)%setup(gr%mesh, c, stat, msg, max_iterations=MAX_ITERATIONS, &
+         call mg(s)%s%setup(gr%mesh, c, stat, msg, max_iterations=MAX_ITERATIONS, &
                           root_cells=merge(1_I4P, huge(1_I4P), s == 1))
       endif
       if (failed('mg setup')) return
-      call mg(s)%solve_packed(gr%mesh, buf, FACTOR, phi(:,:,:,:,s), stat, msg) ; if (failed('mg solve')) return
-      its(s) = mg(s)%iterations + mg(s)%iterations0
+      call mg(s)%s%solve_packed(gr%mesh, buf, FACTOR, phi(:,:,:,:,s), stat, msg) ; if (failed('mg solve')) return
+      its(s) = mg(s)%s%iterations + mg(s)%s%iterations0
    enddo
    d = 0._R_P
    do b=1, gr%nb
@@ -766,17 +775,17 @@ contains
    enddo
    call c%max_real8(d, stat)
    nsub_expected = nint(log(real(NB_SIDE, R_P)) / log(2._R_P))
-   ok = mg(1)%lmin - mg(1)%lbot == nsub_expected .and. mg(2)%lbot == mg(2)%lmin
-   ok = ok .and. mg(1)%residual <= mg(1)%tolerance_used .and. mg(2)%residual <= mg(2)%tolerance_used
+   ok = mg(1)%s%lmin - mg(1)%s%lbot == nsub_expected .and. mg(2)%s%lbot == mg(2)%s%lmin
+   ok = ok .and. mg(1)%s%residual <= mg(1)%s%tolerance_used .and. mg(2)%s%residual <= mg(2)%s%tolerance_used
    ok = ok .and. d(1) <= TOL_SUB * d(2)
    ok = ok .and. its(1) <= max(MAX_SUB_UNIFORM, nint(MAX_SUB_RATIO * its(2)))
-   if (c%rank == 0) print '(A)', '   '//label//' levels inside the blocks '//itoa(mg(1)%lmin - mg(1)%lbot)// &
+   if (c%rank == 0) print '(A)', '   '//label//' levels inside the blocks '//itoa(mg(1)%s%lmin - mg(1)%s%lbot)// &
       ', iterations '//itoa(its(1))//' (exact coarsest '//itoa(its(2))//'), |Phi_sub - Phi_exact| / max |Phi| '// &
       fmt(d(1) / d(2))//'  '//merge('PASS', 'FAIL', ok)
-   call verdict(label, ok, 'levels '//itoa(mg(1)%lmin - mg(1)%lbot)//' (= '//itoa(nsub_expected)//'), iterations '// &
+   call verdict(label, ok, 'levels '//itoa(mg(1)%s%lmin - mg(1)%s%lbot)//' (= '//itoa(nsub_expected)//'), iterations '// &
                 itoa(its(1))//' ('//itoa(its(2))//', <= '//itoa(max(MAX_SUB_UNIFORM, nint(MAX_SUB_RATIO * its(2))))// &
                 '), |sub-exact|/max '//fmt(d(1) / d(2))//' (<= '//fmt(TOL_SUB)//')')
-   call mg(1)%destroy ; call mg(2)%destroy ; call gr%mesh%destroy
+   call mg(1)%s%destroy ; call mg(2)%s%destroy ; call gr%mesh%destroy
    endsubroutine check_sub
 
    subroutine check_flail_forward(label, bc, nk, level, amr, dg_order)
@@ -1746,20 +1755,6 @@ contains
 #endif
    allocate(elisha_hierarchical_solver_object :: s)
    endsubroutine new_mg
-
-   subroutine new_mg2(s)
-   !< Two hierarchical solvers of the run's backend (see new_mg).
-   class(elisha_hierarchical_solver_object), allocatable, intent(inout) :: s(:) !< Solvers.
-
-   if (allocated(s)) deallocate(s)
-#ifdef _CUFFT
-   if (device) then
-      allocate(elisha_hierarchical_solver_oac_object :: s(2))
-      return
-   endif
-#endif
-   allocate(elisha_hierarchical_solver_object :: s(2))
-   endsubroutine new_mg2
 
    subroutine fl_setup(fl, mesh, st, m_, isolated, bc, dg_order)
    !< The facade's setup on the run's backend: with --device the cuFFT and OpenACC molds.
