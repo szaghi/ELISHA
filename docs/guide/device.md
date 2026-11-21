@@ -71,7 +71,12 @@ assembly; `ELISHA_ASSEMBLY_DEVICE` on it returns `ELISHA_ERR_ARGUMENT`, and so d
 device assembly) measured it at level 4 with 3 ghost layers. The multigrid with 3 932 160 cells was 9 to 24% slower at
 np 1 and 2: 0.320 s against 0.258 s periodic and 0.707 s against 0.649 s isolated at np 1. The extra time was the
 staging: about 370 MB per solve at np 1, the source plus `phi` both ways, 0.062 s at about 6 GB/s.
-[Performance, Scaling (EB)](./performance#device-a30-job-1369163) has every row.
+
+**With the device assembly, `on_device` is the faster mode for the multigrid.** Job 1369224 (same ladder) measured it
+7 to 25% faster than host arrays: 0.143 s against 0.191 s periodic and 0.408 s against 0.497 s isolated at np 1. Both
+modes gained from the symmetric V-cycle's fewer iterations. The spectral solver's `on_device` no longer copies `phi`
+to the host before the solve, but still gathers the source through the host: +25% over host arrays periodic at np 1,
+down from +48%. [Performance, Scaling (EB)](./performance#device-a30-the-device-assembly-job-1369224) has every row.
 
 `src/tests/device/elisha_test_device_api_mpi` solves each case three ways: ADAM FNL, ELISHA with host arrays, and
 ELISHA with `on_device`. The cases are hierarchical (periodic, ghost-Dirichlet and D/N roots, isolated), spectral, and

@@ -118,9 +118,11 @@ takes `buf` and `phi` already on the device.
 
 The 3.9 M-cell periodic solve takes 0.33 s against ADAM's 0.35 s in the same job. The gain is largest where the root
 is a large share of the V-cycle: the 491 520-cell cases, and the isolated ones, whose James step runs two solves.
-`on_device` saves the client its own copies, not the per-solve transfers: the right-hand side and the ghost fill stay
-on the host to keep their summation order. The scaling ladder measured what that staging costs: `on_device` is 9 to 24%
-slower than host arrays on the multigrid and up to 51% on the FFT ([Scaling](#device-a30-job-1369163)).
+`on_device` then saved the client its own copies, not the per-solve transfers: the right-hand side and the ghost fill
+stayed on the host to keep their summation order, and the scaling ladder measured `on_device` 9 to 24% slower than host
+arrays on the multigrid and up to 51% on the FFT ([Scaling](#device-a30-job-1369163)). The device assembly (2026-11-21)
+removed the multigrid's staging: its `on_device` is now 7 to 25% faster than host arrays
+([job 1369224](#device-a30-the-device-assembly-job-1369224)).
 
 ## Step 09: stencil level operators (audit C2)
 
@@ -337,6 +339,37 @@ The multigrid runs 17.0 FCG iterations per solve periodic and 22.0 + 19.0 isolat
 redundant path. Its setup is host assembly: 20.2 s at np 1, 9.7 s at np 2 and 5.0 s at np 4. One setup costs as
 much as about 80 solves at np 1.
 
+### Device, A30: the device assembly (job 1369224)
+
+Job 1369224 (2026-11-21) re-ran the device ladder on the same protocol, problems and partition, after three changes:
+the symmetric V-cycle, the multigrid's device assembly (the OpenACC default,
+[the device backends](./device#the-root-on-the-device-and-device-resident-arrays-m7-audit-c4)), and the FFT's
+`on_device` no longer copying `phi` to the host before the solve. Minimum solve time in seconds; the last column
+compares the two calling modes in this job:
+
+| Problem | np | Host arrays, 1369163 | Host arrays | `--on-device`, 1369163 | `--on-device` | `on_device` against host arrays |
+|---------|----|----------------------|-------------|------------------------|---------------|-------------------------------|
+| FFT periodic | 1 | 0.0563 | 0.0565 | 0.0836 | 0.0704 | +25% |
+| FFT periodic | 2 | 0.0300 | 0.0302 | 0.0453 | 0.0387 | +28% |
+| FFT periodic | 4 | 0.0260 | 0.0274 | 0.0347 | 0.0310 | +13% |
+| FFT isolated | 1 | 0.114 | 0.114 | 0.140 | 0.126 | +11% |
+| FFT isolated | 2 | 0.0891 | 0.0891 | 0.105 | 0.0980 | +10% |
+| FFT isolated | 4 | 0.110 | 0.111 | 0.112 | 0.112 | +1% |
+| MG periodic | 1 | 0.258 | 0.191 | 0.320 | 0.143 | -25% |
+| MG periodic | 2 | 0.152 | 0.115 | 0.177 | 0.0888 | -23% |
+| MG periodic | 4 | 0.103 | 0.0779 | 0.116 | 0.0649 | -17% |
+| MG isolated | 1 | 0.649 | 0.497 | 0.707 | 0.408 | -18% |
+| MG isolated | 2 | 0.391 | 0.298 | 0.438 | 0.252 | -15% |
+| MG isolated | 4 | 0.342 | 0.263 | 0.357 | 0.244 | -7% |
+
+- **The multigrid with host arrays is 23 to 26% faster**, mostly the symmetric V-cycle: 17.0 to 13.0 FCG iterations
+  per solve periodic, 19.0 to 14.0 for the isolated final solve. Per iteration it is about 3% faster, from the
+  uploads the device assembly drops (the right-hand side and `u` per solve).
+- **The multigrid with `on_device` is now faster than host arrays**, by 7 to 25%: 0.143 s against 0.191 s periodic
+  at np 1, where it was 0.320 s against 0.258 s. Nothing is staged: the source is read and `phi` written on the device.
+- **The FFT's `on_device` costs half its former overhead**, +25% instead of +48% periodic at np 1. The source still
+  goes to rank 0 through the host and `phi` back to the device; the copy of `phi` to the host before the solve is gone.
+
 These rows are not comparable with the device bench rows above, which time cold solves with 2 ghost layers on
 another node. The ladder uses ADAM's ladder protocol (warm-started, the source moving), 3 ghost layers, and node
 gnode12 with driver 545.
@@ -414,13 +447,14 @@ the maximum over the ranks. ADAM's table does not record the nodes.
     starting points.
   - The isolated FFT does not scale past 2 GPUs: 0.089 s at np 2, 0.110 s at np 4. Its solve phase, which includes
     the GPU-to-GPU slab transposes, rises from 24 to 67 ms. FLAIL measured the same at np 4 (0.112 s).
-- **`on_device` is slower than host arrays**, by 9 to 24% for the multigrid and 18 to 51% for the FFT at np 1
-  and 2. Concretely: 0.320 against 0.258 s for MG periodic at np 1, and 0.0836 against 0.0563 s for FFT periodic.
+- **With the host assembly (job 1369163), `on_device` was slower than host arrays**, by 9 to 24% for the multigrid
+  and 18 to 51% for the FFT at np 1 and 2: 0.320 against 0.258 s for MG periodic at np 1, and 0.0836 against 0.0563 s
+  for FFT periodic. The device assembly turned the multigrid's around (job 1369224, above).
   - The cause: the right-hand side and the ghost fill run on the host, in the host's order, to stay bitwise. So
     `on_device` copies the source from the device to a host copy and moves `phi` (every ghost layer) to the host and
     back, around a solve that is otherwise the host-array path.
   - For the 3.9 M-cell multigrid at np 1 that is about 370 MB per solve (`phi` with 3 ghost layers is 169 MB),
     which matches the 0.062 s measured at about 6 GB/s. The FFT case matches too: 197 MB and 0.027 s, about 7 GB/s.
   - The cost shrinks with np because the data per rank shrinks.
-  - **Today, pass host arrays.** `on_device` pays off only once the right-hand side and the ghost fill move to the
-    device.
+  - Since the device assembly the multigrid's `on_device` pays off (the client's data on the device); the FFT's
+    still costs 1 to 28% over host arrays.
