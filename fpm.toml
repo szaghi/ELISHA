@@ -148,3 +148,8 @@ main = "elisha_test_stencil_mpi.F90"
 name = "elisha_sv_fft_mpi"
 source-dir = "src/tests"
 main = "elisha_sv_fft_mpi.F90"
+
+[[test]]
+name = "elisha_sv_mg_mpi"
+source-dir = "src/tests"
+main = "elisha_sv_mg_mpi.F90"
