@@ -132,6 +132,8 @@ contains
    integer(I4P), allocatable                        :: flat(:), counts(:) !< Gathered coordinates, counts per rank.
    integer(I8P)                                     :: vol(1), domain     !< Volumes, in cells of lmax blocks.
    integer(I4P)                                     :: b, d, r, nd, l, id !< Counters.
+   integer(I4P)                                     :: a4(4)  !< An ancestor block (a named variable, not a
+                                                              !< function result: no argument temporary).
    character(160)                                   :: w      !< Message buffer.
    character(:), allocatable                        :: mine   !< This rank's message.
 
@@ -192,7 +194,8 @@ contains
    ! exact cover: no block inside another (this rank's), then the volume (every rank sums the gathered list alike)
    do b=1, self%nb
       do l=self%lmin, self%coords(4,b)-1
-         if (self%leaf_of(ancestor(self%coords(:,b), l)) /= 0) then
+         a4 = ancestor(self%coords(:,b), l)
+         if (self%leaf_of(a4) /= 0) then
             write(w, '(A,4(1X,I0),A,I0)') 'block (i, j, k, level)', self%coords(:,b), ' lies inside a block at level ', l
             call set_local(ELISHA_ERR_MESH_COVERAGE, trim(w))
             exit
@@ -273,7 +276,8 @@ contains
                nb4(dd) = int(modulo(int(nb4(dd), I8P), nmax), I4P)
             endif
             do ll=c4(4), self%lmin, -1
-               if (self%leaf_of(ancestor(nb4, ll)) /= 0) then
+               a4 = ancestor(nb4, ll)
+               if (self%leaf_of(a4) /= 0) then
                   if (ll < c4(4) - 1) then
                      write(w, '(A,4(1X,I0),A,I0,A,I0)') 'leaf (i, j, k, level)', c4, ' faces a leaf at level ', ll, &
                                                         ' across axis ', dd

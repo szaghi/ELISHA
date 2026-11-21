@@ -498,6 +498,7 @@ contains
    integer(I4P)                                    :: dg_order_   !< Copy of the argument.
    integer(I4P)                                    :: axis_order_(3) !< Copy of the argument.
    real(R_P)                                       :: dxyz_(3)    !< Copy of the argument.
+   logical                                         :: no_periodic(3) !< No periodic axis (elisha_check_isolated).
    logical                                         :: null_(3), isolated_, dirichlet_ !< Copies of the arguments.
    integer(I4P)                                    :: bc_(2,3)    !< Copy of the argument.
    type(elisha_comm_object)                        :: comm_       !< Copy of the argument.
@@ -519,8 +520,9 @@ contains
    dg_order_ = 0_I4P
    if (present(dg_order)) dg_order_ = dg_order
    call elisha_check_dg_order(dg_order_, stat, errmsg) ; if (stat /= ELISHA_OK) return
+   no_periodic = .false. ! a named array, not a constructor: no argument temporary (ifx -check arg_temp_created)
    call elisha_check_isolated(isolated_, dirichlet_ .or. any(bc_ /= ELISHA_BC_PERIODIC), dg_order_, null_, &
-                              [.false., .false., .false.], dxyz_, stat, errmsg)
+                              no_periodic, dxyz_, stat, errmsg)
    if (stat /= ELISHA_OK) return
    axis_order_ = dg_order_
    if (present(axis_dg_order)) axis_order_ = axis_dg_order
@@ -626,7 +628,9 @@ contains
       integer(I4P) :: z, c, d_, bit       !< Zero-ghost axes, counters.
       integer(I4P) :: n_sub(3), ord_sub(3), bc_sub(2,3) !< A sub-problem's cells, operators, kinds.
       real(R_P)    :: dx_sub(3)           !< A sub-problem's spacing.
+      integer(I4P) :: one_block(3)        !< One block per axis (a named array: no argument temporary).
 
+      one_block = 1_I4P
       z = count([(zero_class(d_), d_=1, 3)])
       self%nsub = 2_I4P**z
       allocate(self%sub_par(3,self%nsub))
@@ -645,7 +649,7 @@ contains
             if (null_(d_)) ord_sub(d_) = 0_I4P
          enddo
          allocate(self%sub(c)%s, mold=self)
-         call self%sub(c)%s%initialize_blocks(nblk=[1_I4P, 1_I4P, 1_I4P], nijk=n_sub, ngc=0_I4P, dxyz=dx_sub,     &
+         call self%sub(c)%s%initialize_blocks(nblk=one_block, nijk=n_sub, ngc=0_I4P, dxyz=dx_sub,     &
                                             level=self%level, null_xyz=null_, isolated=.false., comm=self%comm, &
                                             stat=stat, errmsg=errmsg, bc=bc_sub, dg_order=2_I4P,              &
                                             axis_dg_order=ord_sub)
