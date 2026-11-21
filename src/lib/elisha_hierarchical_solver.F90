@@ -169,7 +169,7 @@ use penf, only : I4P, I8P, str
 use elisha_kind_parameters, only : R_P
 use elisha_comm, only : elisha_comm_object, elisha_halo_plan
 use elisha_mesh, only : elisha_mesh_object
-use elisha_keys, only : elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_table, ELISHA_KEY_LEVEL_OFFSET
+use elisha_keys, only : elisha_bkey, elisha_bkey4, elisha_ckey, elisha_kdecode, elisha_hash_table, ELISHA_KEY_LEVEL_OFFSET
 use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
                               ELISHA_BC_ZERO_GHOSTS, ELISHA_PATH_HIERARCHICAL, ELISHA_OPERATOR_CSR, &
                               ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM, &
@@ -500,6 +500,9 @@ contains
    integer(I4P)              :: growth               !< Root transform cells per root cell (E6b).
    integer(I4P)              :: c(4)                 !< Block coordinates.
    character(*), parameter   :: HERE='elisha_hierarchical_solver_object%setup' !< For the messages.
+   integer(I4P), parameter   :: no_dg(3)=0_I4P       !< No wide D(G) on any axis (named: no argument temporary).
+   integer(I4P)              :: nbr(3), nlr(3)       !< The root solver's blocks and cells per block.
+   real(R_P)                 :: dxr(3)               !< Its cell spacing.
 
    call self%destroy
    if (.not.comm%is_initialized) then
@@ -544,7 +547,7 @@ contains
    call elisha_check_isolated(self%isolated, present(bc), 0_I4P, mesh%null, mesh%periodic, mesh%dx0, stat, errmsg)
    if (stat /= ELISHA_OK) return
    if (present(bc)) then
-      call elisha_check_bc(bc, mesh%null, [0_I4P, 0_I4P, 0_I4P], stat, errmsg) ; if (stat /= ELISHA_OK) return
+      call elisha_check_bc(bc, mesh%null, no_dg, stat, errmsg) ; if (stat /= ELISHA_OK) return
       call elisha_check_periodicity(bc, mesh%periodic, mesh%null, stat, errmsg) ; if (stat /= ELISHA_OK) return
    else
       call elisha_check_unbounded(ELISHA_PATH_HIERARCHICAL, mesh%periodic, mesh%null, stat, errmsg)
@@ -692,8 +695,9 @@ contains
    else
       allocate(elisha_spectral_solver_object :: self%fft)
    endif
-   call self%fft%initialize_blocks(nblk=self%nblk0 * merge(1, 2**self%lmin, self%null), nijk=self%nijk_of(self%lbot), &
-                                   ngc=0_I4P, dxyz=self%dx_of(self%lbot), level=self%lmin, null_xyz=self%null,        &
+   nbr = self%nblk0 * merge(1, 2**self%lmin, self%null) ; nlr = self%nijk_of(self%lbot) ; dxr = self%dx_of(self%lbot)
+   call self%fft%initialize_blocks(nblk=nbr, nijk=nlr, &
+                                   ngc=0_I4P, dxyz=dxr, level=self%lmin, null_xyz=self%null,        &
                                    isolated=.false., comm=self%comm, stat=stat, errmsg=errmsg, bc=self%bc,           &
                                    redundant=product(int(self%nblk0, I8P) * merge(1_I8P, 2_I8P**self%lmin, self%null) &
                                    * int(self%nijk_of(self%lbot), I8P)) <= int(REDUNDANT_ROOT_MAX, I8P))
@@ -707,8 +711,9 @@ contains
       else
          allocate(elisha_spectral_solver_object :: self%gfft)
       endif
-      call self%gfft%initialize_blocks(nblk=[1_I4P, 1_I4P, 1_I4P], nijk=self%nc + 2, ngc=0_I4P, &
-                                       dxyz=self%dx_of(self%lmin), level=self%lmin, null_xyz=self%null, isolated=.true., &
+      nbr = 1 ; nlr = self%nc + 2 ; dxr = self%dx_of(self%lmin)
+      call self%gfft%initialize_blocks(nblk=nbr, nijk=nlr, ngc=0_I4P, &
+                                       dxyz=dxr, level=self%lmin, null_xyz=self%null, isolated=.true., &
                                        comm=self%comm, stat=stat, errmsg=errmsg)
       if (stat /= ELISHA_OK) then
          call self%destroy
@@ -765,7 +770,7 @@ contains
                      exit blocks
                   endif
                   do e=1, size(keys)
-                     call trip_add(t, (b - 1) * self%ncb + self%lin([i, j, kk]), keys(e), vals(e))
+                     call trip_add(t, (b - 1) * self%ncb + self%lin(i, j, kk), keys(e), vals(e))
                   enddo
                enddo
             enddo
@@ -820,7 +825,7 @@ contains
                         if (self%outside(lv, nb3)) then ! a domain face: its kind's ghost, the value set by solve
                            ! (isolated: every such leaf is at lmin, elisha_check_isolated_mesh above, D-87-2)
                            self%nbnd = self%nbnd + 1
-                           self%bnd_row(self%nbnd) = (b - 1) * self%ncb + self%lin(ijk)
+                           self%bnd_row(self%nbnd) = (b - 1) * self%ncb + self%lin(ijk(1), ijk(2), ijk(3))
                            self%bnd_kind(self%nbnd) = self%bc(merge(1, 2, sgn < 0),dd)
                            hxyz = self%dx_of(lv)
                            self%bnd_dir(self%nbnd) = sgn * dd
@@ -933,6 +938,7 @@ contains
       integer(I4P)             :: q, nloc, i, j, kk, pp, dd, sgn, row, o, id_, ch !< Counters.
       integer(I4P)             :: cc(3), nb3(3), pc(3), cch(3) !< Coordinates.
       integer(I4P)             :: nbc(3), fc(3), m !< E_l^T: the coarse neighbour, a fine cell on the face, its bit.
+      integer(I4P)             :: par(3)          !< A parent cell (named: no argument temporary).
       integer(I4P)             :: nl(3), nlc(3) !< Cells per block at lv and lv-1.
       real(R_P)                :: w !< Face weight.
       integer(I8P), allocatable :: hkey(:) !< A_l's halo columns: their cell keys.
@@ -950,7 +956,7 @@ contains
             do j=1, nl(2)
                do i=1, nl(1)
                   cc = self%node_c(1:3,id_) * nl + [i-1, j-1, kk-1]
-                  row = (q - 1) * self%ncb_of(lv) + self%lin_of(lv, [i, j, kk])
+                  row = (q - 1) * self%ncb_of(lv) + self%lin_of(lv, i, j, kk)
                   self%colour(lv)%v(row) = mod(sum(cc), 2)
                   do pp=1, self%nd
                      dd = self%act(pp)
@@ -973,14 +979,17 @@ contains
                         self%diag(lv)%v(row) = self%diag(lv)%v(row) - w
                         if (lv <= self%lmin) then ! every cell of the domain is in the level
                            call trip_add(ta, row, elisha_ckey(lv, nb3), w)
-                        elseif (self%node_hash%get(elisha_bkey([nb3 / self%nijk, lv])) > 0) then
+                        elseif (self%node_hash%get(elisha_bkey4(nb3(1) / self%nijk(1), nb3(2) / self%nijk(2), &
+                                                                nb3(3) / self%nijk(3), lv)) > 0) then
                            call trip_add(ta, row, elisha_ckey(lv, nb3), w)
                         else
-                           call trip_add(te, row, elisha_ckey(lv-1, self%parent3(nb3)), w)
+                           par = self%parent3(nb3)
+                           call trip_add(te, row, elisha_ckey(lv-1, par), w)
                         endif
                      enddo
                   enddo
-                  call trip_add(tp, row, elisha_ckey(lv-1, self%parent3(cc)), 1._R_P)
+                  par = self%parent3(cc)
+                  call trip_add(tp, row, elisha_ckey(lv-1, par), 1._R_P)
                enddo
             enddo
          enddo
@@ -992,7 +1001,7 @@ contains
             do j=1, nlc(2)
                do i=1, nlc(1)
                   pc = self%node_c(1:3,id_) * nlc + [i-1, j-1, kk-1]
-                  row = (q - 1) * self%ncb_of(lv-1) + self%lin_of(lv-1, [i, j, kk])
+                  row = (q - 1) * self%ncb_of(lv-1) + self%lin_of(lv-1, i, j, kk)
                   do o=0, 2**self%nd-1
                      cch = pc
                      do ch=1, self%nd
@@ -1012,7 +1021,7 @@ contains
                do j=1, nlc(2)
                   do i=1, nlc(1)
                      pc = self%node_c(1:3,id_) * nlc + [i-1, j-1, kk-1]
-                     row = (q - 1) * self%ncb_of(lv-1) + self%lin_of(lv-1, [i, j, kk])
+                     row = (q - 1) * self%ncb_of(lv-1) + self%lin_of(lv-1, i, j, kk)
                      do pp=1, self%nd
                         dd = self%act(pp)
                         w = self%face_weight(lv, dd)
@@ -1024,7 +1033,8 @@ contains
                            do ch=1, self%nd
                               fc(self%act(ch)) = 2 * nbc(self%act(ch))
                            enddo
-                           if (self%node_hash%get(elisha_bkey([fc / nl, lv])) <= 0) cycle ! not refined: no seam
+                           if (self%node_hash%get(elisha_bkey4(fc(1) / nl(1), fc(2) / nl(2), fc(3) / nl(3), lv)) <= 0) &
+                              cycle ! not refined: no seam
                            fc(dd) = fc(dd) + merge(1, 0, sgn < 0) ! the neighbour's children facing this cell
                            do o=0, 2**(self%nd-1)-1 ! the fine cells of the face: the other active axes' bits
                               cch = fc
@@ -2142,14 +2152,16 @@ contains
    integer(I4P),             intent(in) :: nb3(3) !< Cell coordinates.
    integer(I4P)                         :: cls    !< Class.
    integer(I4P)                         :: id     !< Node id.
+   integer(I4P)                         :: p3(3)  !< The parent cell (named: no argument temporary).
 
-   id = self%node_hash%get(elisha_bkey([nb3 / self%nijk, lv]))
+   id = self%node_hash%get(elisha_bkey4(nb3(1) / self%nijk(1), nb3(2) / self%nijk(2), nb3(3) / self%nijk(3), lv))
    if (id > 0) then
       cls = merge(CLS_SAME, CLS_FINER, self%node_leaf(id))
       return
    endif
    if (lv > self%lmin) then
-      if (self%leaf_hash%get(elisha_bkey([self%parent3(nb3) / self%nijk, lv-1])) > 0) then
+      p3 = self%parent3(nb3) / self%nijk
+      if (self%leaf_hash%get(elisha_bkey4(p3(1), p3(2), p3(3), lv-1)) > 0) then
          cls = CLS_COARSER
          return
       endif
@@ -2228,25 +2240,25 @@ contains
    self%xsend = 0._R_P ; self%xhalo = 0._R_P
    endsubroutine make_work
 
-   pure function lin(self, ijk) result(l)
-   !< Linear index of cell (i,j,k) in a block, i fastest.
-   class(elisha_hierarchical_solver_object), intent(in) :: self !< The solver.
-   integer(I4P),             intent(in) :: ijk(3) !< Cell (1-based).
-   integer(I4P)                         :: l      !< Index.
+   pure function lin(self, i, j, k) result(l)
+   !< Linear index of cell (i,j,k) in a block, i fastest (scalars: no argument temporary, ELISHA notes decision 4).
+   class(elisha_hierarchical_solver_object), intent(in) :: self    !< The solver.
+   integer(I4P),             intent(in) :: i, j, k !< Cell (1-based).
+   integer(I4P)                         :: l       !< Index.
 
-   l = ijk(1) + (ijk(2) - 1) * self%nijk(1) + (ijk(3) - 1) * self%nijk(1) * self%nijk(2)
+   l = i + (j - 1) * self%nijk(1) + (k - 1) * self%nijk(1) * self%nijk(2)
    endfunction lin
 
-   pure function lin_of(self, lv, ijk) result(l)
-   !< Linear index of a cell (1-based) in a block at level lv (`nijk_of(lv)` cells).
-   class(elisha_hierarchical_solver_object), intent(in) :: self !< The solver.
-   integer(I4P),             intent(in) :: lv     !< Level.
-   integer(I4P),             intent(in) :: ijk(3) !< Cell (1-based).
-   integer(I4P)                         :: l      !< Index.
-   integer(I4P)                         :: nl(3)  !< Cells per block.
+   pure function lin_of(self, lv, i, j, k) result(l)
+   !< Linear index of a cell (1-based) in a block at level lv (`nijk_of(lv)` cells; scalars: no argument temporary).
+   class(elisha_hierarchical_solver_object), intent(in) :: self    !< The solver.
+   integer(I4P),             intent(in) :: lv      !< Level.
+   integer(I4P),             intent(in) :: i, j, k !< Cell (1-based).
+   integer(I4P)                         :: l       !< Index.
+   integer(I4P)                         :: nl(3)   !< Cells per block.
 
    nl = self%nijk_of(lv)
-   l = ijk(1) + (ijk(2) - 1) * nl(1) + (ijk(3) - 1) * nl(1) * nl(2)
+   l = i + (j - 1) * nl(1) + (k - 1) * nl(1) * nl(2)
    endfunction lin_of
 
    pure function ncb_of(self, lv) result(n)
@@ -2291,30 +2303,33 @@ contains
    integer(I4P),             intent(out) :: lidx  !< Local index on the owner.
    integer(I4P)                          :: lv, cc(3), id, loc !< Decoded key, ids.
    integer(I4P)                          :: nl(3)              !< Cells per block at the level.
+   integer(I4P)                          :: ci(3)              !< The cell in its block (1-based).
 
    owner = -1 ; lidx = 0
    call elisha_kdecode(key, lv, cc)
    if (space == SPACE_COMP) then
-      id = self%leaf_hash%get(elisha_bkey([cc / self%nijk, lv]))
+      id = self%leaf_hash%get(elisha_bkey4(cc(1) / self%nijk(1), cc(2) / self%nijk(2), cc(3) / self%nijk(3), lv))
       if (id == 0) return ! a composite key names no leaf
       owner = self%leaf_owner(id)
       loc = self%leaf_loc(id)
    elseif (lv < self%lmin) then ! a level inside the blocks (#84 E5c): the lmin block holding the cell
       if (lv /= space) return ! a level key names another level
       nl = self%nijk_of(lv)
-      id = self%node_hash%get(elisha_bkey([cc / nl, self%lmin]))
+      id = self%node_hash%get(elisha_bkey4(cc(1) / nl(1), cc(2) / nl(2), cc(3) / nl(3), self%lmin))
       if (id == 0) return ! a level key names no node
       owner = self%node_owner(id)
-      lidx = (self%node_loc(id) - 1) * self%ncb_of(lv) + self%lin_of(lv, cc - (cc / nl) * nl + 1)
+      ci = cc - (cc / nl) * nl + 1
+      lidx = (self%node_loc(id) - 1) * self%ncb_of(lv) + self%lin_of(lv, ci(1), ci(2), ci(3))
       return
    else
       if (lv /= space) return ! a level key names another level
-      id = self%node_hash%get(elisha_bkey([cc / self%nijk, lv]))
+      id = self%node_hash%get(elisha_bkey4(cc(1) / self%nijk(1), cc(2) / self%nijk(2), cc(3) / self%nijk(3), lv))
       if (id == 0) return ! a level key names no node
       owner = self%node_owner(id)
       loc = self%node_loc(id)
    endif
-   lidx = (loc - 1) * self%ncb + self%lin(cc - (cc / self%nijk) * self%nijk + 1)
+   ci = cc - (cc / self%nijk) * self%nijk + 1
+   lidx = (loc - 1) * self%ncb + self%lin(ci(1), ci(2), ci(3))
    endsubroutine locate
 
    pure function parent3(self, cc) result(pc)

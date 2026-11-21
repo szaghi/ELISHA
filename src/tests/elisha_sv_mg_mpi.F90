@@ -1031,7 +1031,8 @@ contains
          do j=1, NB_SIDE
             do i=1, NB_SIDE
                cc = cc + 1
-               pe(cc) = phi_exact(cell_centre(gr, b, i, j, k), gr%active)
+               xyz = cell_centre(gr, b, i, j, k) ! named: no argument temporary (ifx -check arg_temp_created)
+               pe(cc) = phi_exact(xyz, gr%active)
             enddo
          enddo
       enddo

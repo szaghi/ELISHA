@@ -21,8 +21,14 @@ is welcome. The project follows a KISS (Keep It Simple and Stupid) philosophy.
    git checkout -b fix/my_contribution
    ```
 3. Test your changes with `fobis build && bash scripts/run_tests.sh`
-4. Check for unnecessary whitespace: `git diff --check`
-5. Submit a pull request with a clear commit message
+4. With ifx, check that the library builds no argument temporary:
+   `fobis build --mode tests-intel-argtemp && bash scripts/check_argtemp.sh`. The check fails on a temporary
+   created inside `src/lib/` or `src/device/`, such as an array constructor or expression passed as an argument (name
+   it first), or a non-contiguous section copied in. It only reports the tests' own one-off ones. `tests-intel-debug`
+   turns the check off, because ADAM's verbatim oracles in `src/tests/adam_*` build such temporaries in their per-cell
+   loops; `tests-intel-argtemp` leaves them out.
+5. Check for unnecessary whitespace: `git diff --check`
+6. Submit a pull request with a clear commit message
 
 ## Fortran Coding Style
 

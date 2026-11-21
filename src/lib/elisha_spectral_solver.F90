@@ -1112,6 +1112,7 @@ contains
    integer(I4P), allocatable :: srcidx(:)                  !< Source z-plane -> local index in src (0: not needed).
    real(R_P),    allocatable :: src(:,:,:)                 !< This rank's source planes [n(1),n(2),needed].
    integer(I4P), allocatable :: sc(:), sd(:), rc(:), rd(:) !< Alltoallv counts and displacements (items).
+   integer(I4P), allocatable :: c1(:), d1(:), c2(:), d2(:) !< The same in values (named: no argument temporary).
    integer(I4P), allocatable :: shdr(:), rhdr(:), fill(:)  !< Headers, cursors.
    real(R_P),    allocatable :: sval(:), rval(:)           !< Values.
    integer(I4P)              :: nr, me, nb(3), np_, w, nzl, nsrc, b, i, j, k, t, t1, t2, t3, s1, s2, s3, r, c, e, q
@@ -1177,9 +1178,11 @@ contains
       enddo
    enddo
    if (nr > 1) then
-      call self%comm%alltoallv_i4(shdr, 3*sc, 3*sd, rhdr, 3*rc, 3*rd, stat)
+      c1 = 3 * sc ; d1 = 3 * sd ; c2 = 3 * rc ; d2 = 3 * rd
+      call self%comm%alltoallv_i4(shdr, c1, d1, rhdr, c2, d2, stat)
       if (collective_failed(stat, errmsg, HERE)) return
-      call self%comm%alltoallv_r(sval, np_*sc, np_*sd, rval, np_*rc, np_*rd, stat)
+      c1 = np_ * sc ; d1 = np_ * sd ; c2 = np_ * rc ; d2 = np_ * rd
+      call self%comm%alltoallv_r(sval, c1, d1, rval, c2, d2, stat)
       if (collective_failed(stat, errmsg, HERE)) return
    endif
    do c=0, sum(rc)-1
@@ -1249,14 +1252,16 @@ contains
       enddo
    enddo
    if (nr > 1) then
-      call self%comm%alltoallv_i4(shdr, 3*sc, 3*sd, rhdr, 3*rc, 3*rd, stat)
+      c1 = 3 * sc ; d1 = 3 * sd ; c2 = 3 * rc ; d2 = 3 * rd
+      call self%comm%alltoallv_i4(shdr, c1, d1, rhdr, c2, d2, stat)
       if (collective_failed(stat, errmsg, HERE)) return
    endif
    do c=0, sum(rc)-1
       call get_plane(rhdr(3*c+1), rhdr(3*c+2), rhdr(3*c+3) - self%zr(me) + 1, sval(w*c+1:w*c+w))
    enddo
    if (nr > 1) then
-      call self%comm%alltoallv_r(sval, w*rc, w*rd, rval, w*sc, w*sd, stat)
+      c1 = w * rc ; d1 = w * rd ; c2 = w * sc ; d2 = w * sd
+      call self%comm%alltoallv_r(sval, c1, d1, rval, c2, d2, stat)
       if (collective_failed(stat, errmsg, HERE)) return
    endif
    fill = sd

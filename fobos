@@ -46,7 +46,7 @@ modes = static-gnu shared-gnu
         static-nvf-oac
         tests-gnu tests-gnu-debug tests-gnu-coverage tests-gnu-serial
         tests-nvf tests-nvf-debug tests-nvf-oac tests-nvf-serial
-        tests-intel tests-intel-debug
+        tests-intel tests-intel-debug tests-intel-argtemp
         bench-gnu bench-nvf bench-hierarchical-gnu bench-hierarchical-nvf
         bench-nvf-oac
         bench-ladder-gnu bench-ladder-nvf bench-ladder-nvf-oac
@@ -189,10 +189,23 @@ help      = Tests, ifx + MPI, optimised (fortran-toolchains matrix: family intel
 template  = template-tests template-intel-release template-intel template-mpi
 
 [tests-intel-debug]
-help      = Tests, ifx + MPI, all checks on (but arg_temp_created: a performance note, printed with a traceback at
-            every call that builds an argument temporary; it flooded the verification tests' output to 82 GB)
+help      = Tests, ifx + MPI, all checks on but arg_temp_created: ADAM's verbatim oracles (src/tests/adam_*) build array
+            temporaries in their per-cell loops by design (their output flooded to 82 GB) and stay byte for byte ADAM's;
+            ELISHA's own code runs that check too, in tests-intel-argtemp
 template  = template-tests template-intel template-mpi template-debug
 cflags    = -c $STD_INT -check noarg_temp_created
+
+[tests-intel-argtemp]
+help      = Tests, ifx + MPI, every check on (arg_temp_created included: ELISHA's code builds no argument temporary),
+            ELISHA's own sources and tests: ADAM's verbatim oracles and the tests that use them are excluded
+template  = template-tests template-intel template-mpi template-debug
+cflags    = -c $STD_INT
+exclude   = adam_field_object.F90 adam_flail_keys_reference.F90 adam_flail_l0_reference.F90 adam_flail_object.F90
+            adam_flail_parameters.F90 adam_flail_parameters_reference.F90 adam_grid_object.F90
+            adam_lattice_green_library.F90 adam_mpih_global.F90 adam_poisson_fft_object.F90 adam_poisson_mg_object.F90
+            elisha_test_adam_parity_l0.F90 elisha_test_facade_parity_mpi.F90 elisha_test_hierarchical_parity_mpi.F90
+            elisha_test_keys.F90 elisha_test_lattice_green.F90 elisha_test_spectral_parity_mpi.F90
+            elisha_test_adam_fft_oracle_mpi.F90 elisha_test_adam_mg_oracle_mpi.F90
 
 # ── benchmark modes: src/bench/elisha_bench_spectral_mpi.F90 into exe-bench/ (not a test: scripts/run_tests.sh runs
 # exe/ only, fpm does not build src/bench); the ADAM oracle it times against lives in src/tests/ ──

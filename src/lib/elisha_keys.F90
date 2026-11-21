@@ -37,7 +37,7 @@ use penf, only : I4P, I8P
 implicit none
 private
 public :: ELISHA_KEY_COORD_LIMIT, ELISHA_KEY_LEVEL_OFFSET, ELISHA_KEY_LEVEL_MAX
-public :: elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_slot
+public :: elisha_bkey, elisha_bkey4, elisha_ckey, elisha_kdecode, elisha_hash_slot
 public :: elisha_hash_table
 
 integer(I4P), parameter :: ELISHA_KEY_COORD_LIMIT=2_I4P**19 !< Coordinates are below it (19 bits).
@@ -59,12 +59,22 @@ endtype elisha_hash_table
 contains
    pure function elisha_bkey(c4) result(key)
    !< Key of a block or cell: (i, j, k, level) packed in 19 + 19 + 19 bits and the level above them (6 bits below the
-   !< int64 sign: see the module; ADAM's comment says 7).
+   !< int64 sign: see the module; ADAM's comment says 7). The array form of `elisha_bkey4`.
    integer(I4P), intent(in) :: c4(4) !< Coordinates (i, j, k, level).
    integer(I8P)             :: key   !< Key.
 
-   key = int(c4(4), I8P) * 2_I8P**57 + int(c4(1), I8P) * 2_I8P**38 + int(c4(2), I8P) * 2_I8P**19 + int(c4(3), I8P)
+   key = elisha_bkey4(c4(1), c4(2), c4(3), c4(4))
    endfunction elisha_bkey
+
+   pure function elisha_bkey4(i, j, k, l) result(key)
+   !< `elisha_bkey` on four scalars (ADAM's arithmetic): no array to build at the call, so no argument temporary
+   !< (ifx `-check arg_temp_created` flags every array constructor passed as an argument, ELISHA notes decision 4).
+   integer(I4P), intent(in) :: i, j, k !< Coordinates.
+   integer(I4P), intent(in) :: l       !< Level.
+   integer(I8P)             :: key     !< Key.
+
+   key = int(l, I8P) * 2_I8P**57 + int(i, I8P) * 2_I8P**38 + int(j, I8P) * 2_I8P**19 + int(k, I8P)
+   endfunction elisha_bkey4
 
    pure function elisha_ckey(lv, cc) result(key)
    !< Key of a cell at level lv.
@@ -72,7 +82,7 @@ contains
    integer(I4P), intent(in) :: cc(3) !< Cell coordinates.
    integer(I8P)             :: key   !< Key.
 
-   key = elisha_bkey([cc, lv + ELISHA_KEY_LEVEL_OFFSET]) ! the levels inside the blocks may be negative (#84 E5c)
+   key = elisha_bkey4(cc(1), cc(2), cc(3), lv + ELISHA_KEY_LEVEL_OFFSET) ! levels inside the blocks may be negative (#84 E5c)
    endfunction elisha_ckey
 
    pure subroutine elisha_kdecode(key, lv, cc)
