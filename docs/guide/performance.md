@@ -181,10 +181,26 @@ were the only multi-node scaling evidence for these solvers. They now run on ELI
 seconds, with no ADAM oracle in the binary. FLAIL's published numbers are quoted next to them
 [below](#against-flail-adam-s-numbers).
 
-The multigrid rows below were measured on 2026-11-20 with ADAM's V-cycle, before the symmetric V-cycle became the
-default ([the hierarchical solver](./hierarchical-solver#the-symmetric-v-cycle)). On the verification's AMR meshes the
-symmetric V-cycle takes 19 to 35% fewer FCG iterations, at one extra sparse product per level and V-cycle over the
-seam rows only; the ladders' meshes have not been re-timed with it.
+The multigrid rows below were measured on 2026-11-20 (job 1369135) with ADAM's V-cycle, before the symmetric
+V-cycle became the default ([the hierarchical solver](./hierarchical-solver#the-symmetric-v-cycle)). Job 1369212
+(2026-11-21, the same node type, protocol and problems) re-timed the strong ladder at np 1, 16 and 64 with the
+symmetric V-cycle. The FFT rows are the control, the same code. Their minima agree with 1369135's within 0.5% at
+np 1 and within 9% at np 16 and 64. Their medians at np 16 and 64 differ by up to 50% between the two jobs, the noise
+of solves of 10 to 30 ms. The multigrid solves below take 0.29 s and more. Multigrid, minimum solve time:
+
+| Problem | np | ADAM's V-cycle [s] | Symmetric [s] | Change |
+|---------|----|--------------------|---------------|--------|
+| periodic | 1 | 8.27 | 5.88 | -29% |
+| periodic | 16 | 1.05 | 0.755 | -28% |
+| periodic | 64 | 0.409 | 0.288 | -30% |
+| isolated | 1 | 25.2 | 19.1 | -24% |
+| isolated | 16 | 3.41 | 2.59 | -24% |
+| isolated | 64 | 1.39 | 1.05 | -24% |
+
+FCG iterations per solve: periodic 17.8 to 12.0, the isolated final solve 16.0 to 12.0. The time drops less than the
+iterations because each V-cycle does one more sparse product per level, over the seam rows only. The setup (host
+assembly) adds `E_l^T`'s assembly: 14.6 s to 15.6 s periodic and 18.3 s to 19.0 s isolated at np 1, unchanged within
+5% at np 16 and 64. The tables below keep job 1369135's full ladder, ADAM's V-cycle.
 
 ### How the ladders are measured
 

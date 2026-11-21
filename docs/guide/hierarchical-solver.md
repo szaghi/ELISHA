@@ -93,6 +93,8 @@ weight.
 | E1c, 2-D N/D P/P AMR | 200 iterations, residual 0.1157 | 15 iterations |
 | AMR solves of `elisha_sv_mg_mpi`, every leg | 21 to 53 iterations | 15 to 38, 19 to 35% fewer |
 | AMR cases of `elisha_test_hierarchical_solver_mpi` | 20 to 22 | 16 |
+| Strong ladder, 3.9 M AMR cells, CPU, np 1, 16, 64: FCG iterations per solve, periodic; isolated final solve | 17.8; 16.0 | 12.0; 12.0 |
+| The same: minimum solve time ([Performance](./performance#scaling-eb), jobs 1369135 and 1369212) | 8.27, 1.05, 0.409 s periodic; 25.2, 3.41, 1.39 s isolated | 28 to 30% less periodic, 24% less isolated |
 
 The extra work per V-cycle is one sparse product per level above `lmin`, over the seam rows only. Uniform meshes
 have no seam, so their results are unchanged bit for bit. `setup(..., vcycle=ELISHA_VCYCLE_ADAM)` keeps ADAM's
