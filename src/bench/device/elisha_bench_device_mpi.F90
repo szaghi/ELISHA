@@ -2,6 +2,7 @@
 program elisha_bench_device_mpi
 !< ELISHA benchmark: the device backends' solve times against ADAM's device twins (OpenACC + cuFFT), same inputs.
 !<
+!< ELISHA's multigrid runs ADAM's V-cycle (`vcycle=ELISHA_VCYCLE_ADAM`): the same algorithm, compared bitwise.
 !< ADAM's FLAIL "Performance" problem on the GPU: the cube [-1,1]^3 with a Gaussian source. ADAM's solvers are the
 !< verbatim device twins (`adam_fnl_poisson_fft_object`, `adam_fnl_poisson_mg_object`, over the shims), ELISHA's the
 !< device backends (`elisha_spectral_solver_cufft_object`, `elisha_hierarchical_solver_oac_object`, the root on cuFFT,
@@ -32,8 +33,8 @@ use mpi
 use openacc
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use, intrinsic :: iso_fortran_env, only : int64
-use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, elisha_comm_object, &
-                   elisha_mesh_object
+use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_ADAM, &
+                   elisha_comm_object, elisha_mesh_object
 use elisha_device, only : elisha_spectral_solver_cufft_object, elisha_hierarchical_solver_oac_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
@@ -300,7 +301,7 @@ contains
    call adam%initialize(grid=grid, field=field, isolated=isolated)
    sa = elapsed(t0)
    t0 = mark()
-   call eli%setup(mesh, c, stat, msg, isolated=isolated, level_operator=lop)
+   call eli%setup(mesh, c, stat, msg, isolated=isolated, level_operator=lop, vcycle=ELISHA_VCYCLE_ADAM)
    se = elapsed(t0)
    if (stat /= ELISHA_OK) error stop 'setup'
    ! one untimed pair (cold), checked bitwise, then the alternated timed cold solves

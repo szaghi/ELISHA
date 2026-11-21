@@ -2,7 +2,8 @@
 program elisha_test_device_api_mpi
 !< ELISHA device test: the device-resident API (`on_device`) and the V-cycle root on the device are bitwise ADAM FNL's.
 !<
-!< M7, audit C4. Every case solves one source three ways, each on its own solver object (cold solves):
+!< M7, audit C4. Every case solves one source three ways, each on its own solver object (cold solves; E and D of the
+!< hierarchical cases with ADAM's V-cycle, `vcycle=ELISHA_VCYCLE_ADAM`, for the bitwise comparison with A):
 !< - A: ADAM's device twin (`poisson_mg_fnl_object` or `poisson_fft_fnl_object`, ADAM 669d0bdd verbatim, over the shims),
 !<   host arrays; its V-cycle root goes through the host;
 !< - E: ELISHA's device backend, host arrays (`on_device` absent); its root on the device (`root_solve`) when the root is
@@ -25,7 +26,7 @@ use, intrinsic :: iso_fortran_env, only : int64
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use openacc
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
-                   ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, &
+                   ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_ADAM, &
                    elisha_comm_object, elisha_mesh_object, elisha_solver_object, elisha_diagnostics_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
@@ -194,12 +195,15 @@ contains
    pa = 0._R_P ; pe = 0._R_P ; pd = 0._R_P
    if (present(bc)) then
       call a%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
-      call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
-      if (stat == ELISHA_OK) call dv%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
+      call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, vcycle=ELISHA_VCYCLE_ADAM)
+      if (stat == ELISHA_OK) call dv%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, &
+                                           vcycle=ELISHA_VCYCLE_ADAM)
    else
       call a%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated)
-      call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated)
-      if (stat == ELISHA_OK) call dv%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated)
+      call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
+                   vcycle=ELISHA_VCYCLE_ADAM)
+      if (stat == ELISHA_OK) call dv%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, &
+                                           isolated=isolated, vcycle=ELISHA_VCYCLE_ADAM)
    endif
    if (stat /= ELISHA_OK) then
       call fail(label//': setup: '//msg) ; return

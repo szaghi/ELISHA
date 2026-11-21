@@ -7,8 +7,9 @@ program elisha_bench_hierarchical_mpi
 !< 960 blocks, 491 520 cells. Cases: (a) periodic; (b) ghost-Dirichlet faces (bounded); (c) isolated (the James step:
 !< two FCG solves); (d) uniform 64^3, face kinds D/N, N/D, D/D, the root capped at 32^3 cells, so the V-cycle smooths
 !< two levels and its root is the redundant path with an extended transform (128 x 128 x 64 cells on every rank). The
-!< leaves are dealt round-robin. Both solvers get the same packed source; their potentials and iterations must be
-!< bitwise equal (checked on the untimed pair). Every timed solve is a cold one (`has_guess` cleared: the warm start
+!< leaves are dealt round-robin. Both solvers get the same packed source, ELISHA's with ADAM's V-cycle
+!< (`vcycle=ELISHA_VCYCLE_ADAM`: the same algorithm); their potentials and iterations must be bitwise equal (checked on
+!< the untimed pair). Every timed solve is a cold one (`has_guess` cleared: the warm start
 !< would make a repeated solve take no iteration). Timing: wall clock (`MPI_Wtime`), a barrier before every solve, ADAM
 !< and ELISHA solves alternated (A, E, A, E, ...) after one untimed pair, each solve's time the maximum over the ranks;
 !< the minimum and the median over the repetitions; the setups timed once each, apart. Output: one row per case. Not a
@@ -22,7 +23,7 @@ use mpi
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use, intrinsic :: iso_fortran_env, only : int64
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
-                   ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, &
+                   ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_ADAM, &
                    elisha_comm_object, elisha_mesh_object, elisha_hierarchical_solver_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
@@ -176,9 +177,9 @@ contains
    sa = tmax(MPI_WTIME() - t0)
    call MPI_BARRIER(MPI_COMM_WORLD, ierr) ; t0 = MPI_WTIME()
    if (present(bc)) then
-      call eli%setup(mesh, c, stat, msg, bc=bc, root_cells=root_cells, level_operator=lop)
+      call eli%setup(mesh, c, stat, msg, bc=bc, root_cells=root_cells, level_operator=lop, vcycle=ELISHA_VCYCLE_ADAM)
    else
-      call eli%setup(mesh, c, stat, msg, isolated=isolated, level_operator=lop)
+      call eli%setup(mesh, c, stat, msg, isolated=isolated, level_operator=lop, vcycle=ELISHA_VCYCLE_ADAM)
    endif
    se = tmax(MPI_WTIME() - t0)
    if (stat /= ELISHA_OK) error stop 'setup'
