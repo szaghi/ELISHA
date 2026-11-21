@@ -49,6 +49,7 @@ modes = static-gnu shared-gnu
         tests-intel tests-intel-debug
         bench-gnu bench-nvf bench-hierarchical-gnu bench-hierarchical-nvf
         bench-nvf-oac
+        bench-ladder-gnu bench-ladder-nvf bench-ladder-nvf-oac
 
 [common-variables]
 $EXDIRS = PENF/src/tests/ PENF/src/third_party/ PENF/scripts/ PENF/docs/
@@ -227,6 +228,30 @@ preproc      = -D_FFTW -D_CUFFT
 cflags       = -c -acc -gpu=$GPU_CC -cudalib=cufft -Minfo=accel
 lflags       = -acc -gpu=$GPU_CC -cudalib=cufft
 
+# the scaling ladders (ELISHA issue #1, EB): src/bench/ladder/elisha_bench_ladder_mpi.F90, ELISHA alone (its src has
+# no src/tests/ and no ADAM oracle bench), absolute times; scripts/medooza/elisha-ladder.slurm runs them. The host
+# builds into exe-bench/, the device one (the same program with -D_CUFFT: cuFFT + OpenACC backends) into exe-bench-oac/
+[bench-ladder-gnu]
+help      = Scaling ladders of the solvers (ELISHA alone, absolute times), gfortran + MPI, optimised
+template  = template-bench-ladder template-gnu template-mpi template-release
+
+[bench-ladder-nvf]
+help      = Scaling ladders of the solvers (ELISHA alone, absolute times), nvfortran + MPI (HPC-X), optimised, CPU
+template  = template-bench-ladder template-nvf template-mpi template-release
+
+[bench-ladder-nvf-oac]
+help         = Scaling ladders of the device backends (ELISHA alone), nvfortran + MPI (HPC-X), OpenACC + cuFFT
+template     = template-nvf template-mpi template-release
+src          = src/lib/ src/device/ src/bench/ladder/
+exclude_dirs = $EXDIRS
+target       = src/bench/ladder/elisha_bench_ladder_mpi.F90
+output       = elisha_bench_ladder_mpi
+build_dir    = exe-bench-oac/
+ext_libs     = fftw3
+preproc      = -D_FFTW -D_CUFFT
+cflags       = -c -acc -gpu=$GPU_CC -cudalib=cufft -Minfo=accel
+lflags       = -acc -gpu=$GPU_CC -cudalib=cufft
+
 # ── templates: left wins when a mode lists several, so the role template (lib, tests) comes first ──
 # src/tests/device/ (ADAM's device twins, verbatim: OpenACC, cuFFT, GPU-aware MPI; the device tests) is out of
 # every mode but tests-nvf-oac: FoBiS scans its src directories recursively, and a host build cannot compile them.
@@ -295,6 +320,13 @@ src       = src/lib/ src/tests/ src/bench/
 build_dir = exe-bench/
 target    = src/bench/elisha_bench_hierarchical_mpi.F90
 output    = elisha_bench_hierarchical_mpi
+ext_libs  = fftw3
+
+[template-bench-ladder]
+src       = src/lib/ src/bench/ladder/
+build_dir = exe-bench/
+target    = src/bench/ladder/elisha_bench_ladder_mpi.F90
+output    = elisha_bench_ladder_mpi
 ext_libs  = fftw3
 
 # MPI: the compiler's wrapper (mpif90 of the Open MPI / HPC-X first on PATH); serial: the single-rank stub of the
