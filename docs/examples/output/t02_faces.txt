@@ -1,0 +1,6 @@
+$ t02_faces
+  faces (x low/high)     error 32 cells   error 64 cells   order   ghost lo     ghost hi
+  periodic/periodic          3.219E-03        8.036E-04    2.00   = far end    = far end   
+  Dirichlet/Dirichlet        8.036E-04        2.008E-04    2.00   = -inner     = -inner    
+  Neumann/Neumann            8.036E-04        2.008E-04    2.00   = inner      = inner     
+  Dirichlet/Neumann          2.008E-04        5.020E-05    2.00   = -inner     = inner     

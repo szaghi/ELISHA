@@ -1,0 +1,5 @@
+$ t04_amr 0.30 0.17
+  mesh              leaves L0/L1/L2      cells   path           FCG   max error
+ELISHA_ERR_ISOLATED_BOUNDARY_LEAF: a leaf at level 1 touches the domain boundary (coarsest 0)
+ERROR STOP 1
+[exit status 1]

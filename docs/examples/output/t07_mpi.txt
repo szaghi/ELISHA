@@ -1,0 +1,4 @@
+$ t07_mpi
+ranks 1
+spectral    : leaves per rank 64 to 64, FCG  0, energy -1.059E-03, max error 3.17E-03
+hierarchical: leaves per rank 71 to 71, FCG 15, energy -1.059E-03, max error 4.25E-03

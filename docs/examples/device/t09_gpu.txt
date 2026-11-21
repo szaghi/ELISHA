@@ -1,0 +1,8 @@
+$ mpirun -np 1 ./t09_gpu  # fobis build --mode static-nvf-oac --varset iac: nvfortran 26.9-0 -acc -gpu=cc80, NVIDIA A30, medooza job 1369250 (captured 2026-11-21)
+device backends and on_device: T
+spectral    : FCG  0, max error 8.01E-04, values differing between on_device and host arrays 0
+hierarchical: FCG 15, max error 1.19E-03, values differing between on_device and host arrays 0
+$ mpirun -np 2 ./t09_gpu  # the ranks share the A30
+device backends and on_device: T
+spectral    : FCG  0, max error 8.01E-04, values differing between on_device and host arrays 0
+hierarchical: FCG 15, max error 1.19E-03, values differing between on_device and host arrays 0

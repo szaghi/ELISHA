@@ -1,0 +1,5 @@
+$ t04_amr 0.24 0.17
+  mesh              leaves L0/L1/L2      cells   path           FCG   max error
+ELISHA_ERR_MESH_BALANCE: elisha_mesh_object%validate: leaf (i, j, k, level) 6 6 4 2 faces a leaf at level 0 across axis 3 (not 2:1)
+ERROR STOP 1
+[exit status 1]

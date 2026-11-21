@@ -1,0 +1,7 @@
+$ cookbook_reuse
+  step   FCG, one setup   FCG, a setup per step
+     1            13                   13
+     2            12                   13
+     3            12                   13
+     4            12                   13
+     5            12                   13

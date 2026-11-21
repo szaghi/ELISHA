@@ -1,4 +1,0 @@
-$ boundary_kinds
-spectral T, x low Dirichlet T
-x high Neumann T
-hierarchical T, boundary faces 2112, phi = u to 1e-9 T

@@ -18,6 +18,10 @@ Applied 2026-11-21: `docs/public/` holds the logos, favicons, manifest and icons
 image and the feature icons; `README.md` the hero mark. This folder keeps the tokens and the generator, and VitePress
 skips it (`srcExclude`). The paths in the table below are relative to `docs/`; the generator is in `source/`.
 
+One fix to the bundle: the two `icons/*/dirichlet-neumann.svg` had an unescaped `&` in their `<title>`, which made them
+malformed XML (browsers refused them); it is `&amp;` now. The `<title>` is not written by `source/`, so the generator
+needs no change.
+
 ## Files
 
 | File | Use |

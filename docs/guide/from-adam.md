@@ -3,7 +3,7 @@
 ELISHA is ADAM's FLAIL (ADAM 669d0bdd) extracted: the facade `adam_flail_object`, the FFT solver
 `adam_poisson_fft_object`, the multigrid `adam_poisson_mg_object` and their FNL device twins. The arithmetic is
 unchanged but for one fix, the multigrid's symmetric V-cycle, which changes the results on AMR meshes (fewer
-iterations, and no stall: [the symmetric V-cycle](./hierarchical-solver#the-symmetric-v-cycle)). With
+iterations, and no stall: [the symmetric V-cycle](/reference/hierarchical#the-symmetric-v-cycle)). With
 `vcycle=ELISHA_VCYCLE_ADAM` the tests hold every solver and the facade bitwise to ADAM's own code, compiled unchanged
 in `src/tests`. A client that checks its results against ADAM's can wire ELISHA with that option first, then drop
 it. What changed is the interface: a mesh descriptor instead of ADAM's grid and field, the caller's
@@ -28,7 +28,7 @@ ELISHA.
 | Reading `flail%mg%iterations0`, `%residual`, `%tolerance_used` | `solver%diagnostics()%iterations0`, `%residual`, `%tolerance_used` |
 | Reading `flail%mg%nbnd`, `%bnd_kind`, `%bnd_dir`, `%bnd_x` (to build `ghost`) | `solver%boundary_faces(kinds, dir, x, stat, errmsg)`: the same list in the same order |
 | `poisson_fft_object%wall` | `solver%diagnostics()%wall`, `solver%reset_wall()` |
-| `mpih%error_stop` (fatal) | `stat` and `errmsg`; the facade's refusals are listed in [The solver facade](./solver#refusals) |
+| `mpih%error_stop` (fatal) | `stat` and `errmsg`; the facade's refusals are listed in [The solver facade](/reference/solver#refusals) |
 | The warning `... FCG iterations left the residual at ...` (or `CG iterations`), printed on rank 0, the solve returned as converged | `stat = ELISHA_ERR_NOT_CONVERGED` on every rank, `phi` the last iterate with its ghosts filled, `diagnostics()%converged` `.false.`: treat it as a warning to keep ADAM's behaviour |
 | `option_name` (the client's key in the fatal message) | None: the caller words its own message from `stat` |
 | `MG_SEAM_GHOST_SCALE` (from `adam_poisson_mg_object`) | `MG_SEAM_GHOST_SCALE` (from `elisha`) |
@@ -106,9 +106,9 @@ ADAM's own documentation (`docs/flail.md`, ADAM 669d0bdd) times FLAIL on medooza
 `bench_poisson`: the cube `[-1, 1]^3`, a Gaussian source, uniform or with the central box refined, the minimum over
 the repetitions and the maximum over the ranks. **These are ADAM's numbers, not ELISHA's measurements.** ELISHA's own
 timings against ADAM, measured in pairs, are in the Performance sections of [the spectral
-solver](./spectral-solver#performance), [the hierarchical solver](./hierarchical-solver#performance) and [the device
-backends](./device#performance). The scaling ladders that were ADAM's multi-node evidence now run on ELISHA's own
-program: [Scaling (EB)](./performance#scaling-eb).
+solver](/reference/spectral#performance), [the hierarchical solver](/reference/hierarchical#performance) and [the device
+backends](/reference/device#performance). The scaling ladders that were ADAM's multi-node evidence now run on ELISHA's own
+program: [Scaling (EB)](/guide/performance#scaling-eb).
 
 | Solver | Grid | Backend | Problem | 1 | 2 | 4 | 16 ranks / GPUs |
 |--------|------|---------|---------|---|---|---|-----------------|

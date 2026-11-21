@@ -10,7 +10,7 @@ On an AMR grid the exact exchange of the kinetic and gravitational energies need
 volume, rows weighted by the cell volume $V$) to be **symmetric**, and accuracy needs it **consistent**: a bounded
 truncation error at the 2:1 faces and a converging face gradient there. The hierarchical solver assembles the
 **mimetic mean flux** across 2:1 faces: every fine face carries $\tfrac23 w(\bar\Phi_f - \Phi_C)$, $\bar\Phi_f$ the
-mean of the face's fine cells, and the coarse cell their sum ([the method](/guide/hierarchical-solver#the-method)).
+mean of the face's fine cells, and the coarse cell their sum ([the method](/reference/hierarchical#the-method)).
 The choice comes from ADAM's operator study, `seam_operators.py`, which the figure reruns.
 
 What the cases catch:
@@ -51,7 +51,7 @@ second order, the 2:1 face gravity first order, the truncation bounded.*
 
 ELISHA (gfortran 16.2, np 2; iterations, orders and errors the same on np 1 and 3) next to ADAM's documented
 numbers (`multigrid-amr.md`). ELISHA's V-cycle is the symmetric one ([the hierarchical
-solver](/guide/hierarchical-solver#the-symmetric-v-cycle)), so its FCG iterations on AMR are fewer than ADAM's; every
+solver](/reference/hierarchical#the-symmetric-v-cycle)), so its FCG iterations on AMR are fewer than ADAM's; every
 order, error and truncation is the converged solution's and unchanged:
 
 | Asserted | Bound | ELISHA | ADAM (CPU) |
@@ -115,12 +115,12 @@ python3 scripts/verification/seam_operators.py   # the operator study, N = 8 16 
   iteration on a uniform grid.
 - **The levels inside the blocks trade iterations for the root's gather** (E5c): 1 to 14 iterations on a uniform box
   of 1:2:3 cells, 2 to 8 more on AMR with the symmetric V-cycle (1 to 13 with ADAM's)
-  ([the hierarchical solver](/guide/hierarchical-solver#the-method)).
+  ([the hierarchical solver](/reference/hierarchical#the-method)).
 - **ADAM's V-cycle stalled FCG on the E1c 2-D N/D P/P solve; the symmetric one converges in 15 iterations.** The
   stall was 200 iterations with the residual at 0.1157, and ADAM's own multigrid stalled identically, so the defect
   was inherited from ADAM. Its cause: the V-cycle read the coarser correction across a 2:1 face on the way up but never
   applied the adjoint on the way down. That left the preconditioner nonsymmetric on AMR, with a symmetric part
-  indefinite on some seam modes ([the symmetric V-cycle](/guide/hierarchical-solver#the-symmetric-v-cycle)). The E1c
+  indefinite on some seam modes ([the symmetric V-cycle](/reference/hierarchical#the-symmetric-v-cycle)). The E1c
   leg now asserts that the direct solve converges, on every AMR case.
 - **A convergence that depends on the right-hand side was a preconditioner defect.** Before the fix, E1b's AMR
   2-D N/D P/P case (the same mesh, operator and V-cycle as E1c's) converged in 21 iterations while E1c's stalled. For a

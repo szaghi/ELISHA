@@ -6,7 +6,7 @@
 
 ## Case and scope
 
-Isolated boundaries on AMR, by a symmetric James method ([the hierarchical solver](/guide/hierarchical-solver#the-method)):
+Isolated boundaries on AMR, by a symmetric James method ([the hierarchical solver](/reference/hierarchical#the-method)):
 the zero-ghost solve $\Phi_0 = A^{-1}4\pi GV\rho$; the screening charge $s = B^T\Phi_0$ on the ghost cells; their
 values $g = -Gs$, $G$ the inverse of the $V$-weighted coarsest operator on the infinite lattice, by a zero-padded FFT
 on the coarsest box widened by the ghost layer; then $\Phi = A^{-1}(4\pi GV\rho - Bg)$. The map
@@ -51,7 +51,7 @@ ELISHA (gfortran 16.2, np 2) next to ADAM's documented numbers (`multigrid-amr.m
 | a refined leaf on the boundary | refused | `ELISHA_ERR_ISOLATED_BOUNDARY_LEAF` | refused (stop) |
 
 The symmetry defect depends on the rank and the leaves' order (ADAM's pseudo-random vectors), the other numbers are
-the same on 1, 2 and 3 ranks. CPU = device: see [the multigrid page](./multigrid-amr#results) (job 1369211).
+the same on 1, 2 and 3 ranks. CPU = device: see [the multigrid page](/verification/multigrid-amr#results) (job 1369211).
 
 ## Commands
 

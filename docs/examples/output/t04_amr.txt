@@ -1,0 +1,5 @@
+$ t04_amr
+  mesh              leaves L0/L1/L2      cells   path           FCG   max error
+  uniform, coarse    64    0    0       4096   spectral        0    4.65E-02
+  AMR, 3 levels      56   56   64      11264   hierarchical   14    1.15E-02
+  uniform, fine       0    0 4096     262144   spectral        0    4.75E-03

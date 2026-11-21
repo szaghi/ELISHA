@@ -1,0 +1,11 @@
+!         label                                       periodic mesh axes    x faces  y faces  z faces  isolated
+call try('D/N, N/D, D/D on a bounded box          ', [.false., .false., .false.], [D, N], [N, D], [D, D], .false.)
+call try('N/N everywhere: singular, mean removed  ', [.false., .false., .false.], [N, N], [N, N], [N, N], .false.)
+call try('periodic x, ghost-Dirichlet y, D/N z    ', [.true., .false., .false.], [P, P], [G, G], [D, N], .false.)
+call try('a Dirichlet face on a periodic axis     ', [.true., .false., .false.], [D, D], [D, D], [D, D], .false.)
+call try('one periodic face, one Dirichlet        ', [.false., .false., .false.], [P, D], [D, D], [D, D], .false.)
+call try('ghost-Dirichlet with plain Dirichlet    ', [.false., .false., .false.], [G, D], [D, D], [D, D], .false.)
+call try('a bounded box without kinds             ', [.false., .false., .false.], [-1, -1], [-1, -1], [-1, -1], .false.)
+call try('isolated, on a bounded box              ', [.false., .false., .false.], [-1, -1], [-1, -1], [-1, -1], .true.)
+call try('isolated, with kinds                    ', [.false., .false., .false.], [D, D], [D, D], [D, D], .true.)
+call try('isolated, on a periodic axis            ', [.true., .false., .false.], [-1, -1], [-1, -1], [-1, -1], .true.)

@@ -7,11 +7,15 @@
 #                                !region NAME ... !endregion NAME   a part of the program included on its own
 #   docs/examples/snippets/    generated: <program>.F90 without the markers, and <program>-<region>.F90 (dedented)
 #   docs/examples/output/      generated: <ID>.txt, "$ COMMAND" then its standard output (and [exit status N] with -s)
+#   docs/examples/mpi/         captured by hand, never touched here: the runs of the MPI chapter under mpirun
+#   docs/examples/device/      captured by hand, never touched here: the runs of the GPU chapter on an A30
+#                              (each file's first line gives its build and where it ran)
 #
 # The library is built by FoBiS (mode static-gnu-serial: gfortran, serial (-DELISHA_NO_MPI, no MPI at all), FFTW; the
 # archive carries PENF) and every example is compiled against it exactly as a user program would be:
-# `gfortran -I<mods> prog.F90 libelisha_serial.a -lfftw3` (with -fcheck=bounds: an example that reads out of bounds
-# fails the build). The examples run as plain programs, one rank: the communicator given to `elisha_comm_object%init`
+# `gfortran -DELISHA_NO_MPI -I<mods> prog.F90 libelisha_serial.a -lfftw3` (-DELISHA_NO_MPI: an example that also runs
+# under MPI guards its MPI calls with it; -fcheck=bounds: an example that reads out of bounds fails the build). OpenACC
+# directives are comments here: the programs run on the host. The examples run as plain programs, one rank: the communicator given to `elisha_comm_object%init`
 # is ignored by the serial build (an MPI program passes its own, e.g. MPI_COMM_WORLD, and runs under mpirun). They
 # must print only values that do not depend on the machine (explicit formats, a few significant digits; no timings).
 # Each run happens in a scratch directory with a minimal environment and no standard input. The docs-examples check
@@ -51,7 +55,7 @@ for src in "$ex"/src/*.F90; do
 done
 
 for src in "$ex"/src/*.F90; do
-  "$fc" -cpp -O2 -fcheck=bounds,do,mem,pointer -I"$lib/mod" -J"$build/mod" -o "$build/bin/$(basename "$src" .F90)" \
+  "$fc" -cpp -DELISHA_NO_MPI -O2 -fcheck=bounds,do,mem,pointer -I"$lib/mod" -J"$build/mod" -o "$build/bin/$(basename "$src" .F90)" \
         "$src" "$lib/libelisha_serial.a" -lfftw3
 done
 

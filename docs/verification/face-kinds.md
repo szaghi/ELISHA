@@ -12,7 +12,7 @@ centred first derivative composed with itself, which PRISM applies. The spectral
 (odd about a Dirichlet face, even about a Neumann one, over $2n$ cells, or $4n$ when the faces differ; odd about the
 ghost centres, $2(n+1)$ cells, for ghost-Dirichlet) and transforms the extension periodically; zero-ghost and
 free-space faces with D(G) are solved by CG on rank 0, preconditioned by the $p = 2$ operator inverted exactly
-([the spectral solver](/guide/spectral-solver#problems-and-methods)). The driver applies the operators itself, from
+([the spectral solver](/reference/spectral#problems-and-methods)). The driver applies the operators itself, from
 sources it shares no code with: the D1 coefficients come from GIDEON's generated rows (`gideon_tables`), PRISM's
 gradient and divergence from GIDEON's centred FD and FV operators, never from ELISHA's own stencil.
 
@@ -58,7 +58,7 @@ ELISHA (gfortran 16.2, np 2; iterations and orders the same on np 1 and 3, and o
 
 ADAM published no per-configuration numbers for this test beyond the D/D order and the $10^{-15}$ of PRISM's
 operators; its prototypes measured the zero-ghost iterations on their own problems
-([the spectral solver](/guide/spectral-solver#problems-and-methods)).
+([the spectral solver](/reference/spectral#problems-and-methods)).
 
 ## Commands
 

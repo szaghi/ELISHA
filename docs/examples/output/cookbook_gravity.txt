@@ -1,0 +1,4 @@
+$ cookbook_gravity
+   cells    W / (G M^2 / sigma)   exact -1/(2 sqrt(pi))   rel. error
+   16^3         -0.286524           -0.282095         1.57E-02
+   32^3         -0.283178           -0.282095         3.84E-03

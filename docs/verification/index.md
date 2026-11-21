@@ -1,19 +1,31 @@
 # Verification
 
 ELISHA's solvers are verified against analytic and discrete solutions, not against the code they came from. The
-bitwise parity tests hold every solver to ADAM's FLAIL ([the spectral solver](/guide/spectral-solver#what-changed-from-adam-and-what-did-not),
-[the hierarchical solver](/guide/hierarchical-solver#what-changed-from-adam-and-what-did-not)). The physics
+bitwise parity tests hold every solver to ADAM's FLAIL ([the spectral solver](/reference/spectral#what-changed-from-adam-and-what-did-not),
+[the hierarchical solver](/reference/hierarchical#what-changed-from-adam-and-what-did-not)). The physics
 verification, which ADAM ran with its FLAIL drivers, moved here with ADAM issue #136 (decision D2): ELISHA is the
 source of truth for these solvers. The cases, sources, exact solutions and bounds are ADAM's. The drivers call ELISHA,
 build their meshes with `elisha_mesh_object`, and report a refusal as the status code ELISHA returns (decision D3).
 
+<div class="elisha-gallery">
+
+[![SV-2](/verification/sv2-fft-poisson.png)<strong>SV-2: the spectral solver, periodic</strong><span>Two oblique modes on an anisotropic box: the discrete solution to round-off, the continuum at second order, bitwise across rank counts.</span>](/verification/fft-poisson)
+
+[![SV-6](/verification/sv6-isolated.png)<strong>SV-6: the spectral solver, isolated</strong><span>The n = 1 polytrope and the uniform sphere in free space, against their exact potentials.</span>](/verification/isolated-solver)
+
+[![SV-9, SV-12](/verification/sv9-multigrid-amr.png)<strong>SV-9, SV-12: the hierarchical solver on AMR</strong><span>The central box refined, periodic and Dirichlet: against the spectral solver, the exact potential, and the operator's symmetry.</span>](/verification/multigrid-amr)
+
+[![SV-13](/verification/sv13-james.png)<strong>SV-13: the James step</strong><span>Isolated stars on AMR: against the spectral solver's free space, the exact potentials, and the symmetry of the solution map.</span>](/verification/james-step)
+
+</div>
+
 | Page | Case | Solver | Checked against |
 |---|---|---|---|
-| [SV-2: periodic](./fft-poisson) | two oblique modes on the box $[0,1]\times[0,2]\times[0,3]$ | spectral | the discrete solution (round-off), the continuum one (second order) |
-| [SV-6: isolated](./isolated-solver) | the $n = 1$ polytrope and the uniform sphere on $[-1,1]^3$ | spectral, zero padding | the exact potentials ($-GM/r$ outside) |
-| [SV-9, SV-12: AMR](./multigrid-amr) | SV-2's source, the central box refined; periodic and Dirichlet | hierarchical | the spectral solver (uniform), the exact potential, the operator's symmetry and consistency |
-| [SV-13: the James step](./james-step) | SV-6's stars, the star's box refined | hierarchical, isolated | the spectral solver's isolated mode (uniform), the exact potentials, the symmetry of the solution map |
-| [Face kinds and D(G)](./face-kinds) | per-axis eigenfunctions of every face kind; manufactured solutions | spectral, compact and wide D(G) | the discrete solutions (round-off), the continuum (D/D order), PRISM's own operators, a direct Green's sum |
+| [SV-2: periodic](/verification/fft-poisson) | two oblique modes on the box $[0,1]\times[0,2]\times[0,3]$ | spectral | the discrete solution (round-off), the continuum one (second order) |
+| [SV-6: isolated](/verification/isolated-solver) | the $n = 1$ polytrope and the uniform sphere on $[-1,1]^3$ | spectral, zero padding | the exact potentials ($-GM/r$ outside) |
+| [SV-9, SV-12: AMR](/verification/multigrid-amr) | SV-2's source, the central box refined; periodic and Dirichlet | hierarchical | the spectral solver (uniform), the exact potential, the operator's symmetry and consistency |
+| [SV-13: the James step](/verification/james-step) | SV-6's stars, the star's box refined | hierarchical, isolated | the spectral solver's isolated mode (uniform), the exact potentials, the symmetry of the solution map |
+| [Face kinds and D(G)](/verification/face-kinds) | per-axis eigenfunctions of every face kind; manufactured solutions | spectral, compact and wide D(G) | the discrete solutions (round-off), the continuum (D/D order), PRISM's own operators, a direct Green's sum |
 
 The multigrid page also covers the hierarchical solver's face kinds (E1b), the levels inside the blocks (E5c) and
 the facade against the solvers it chooses (E1c).
@@ -90,4 +102,4 @@ python3 scripts/verification/make_verification_figures.py --work WORK --dump DUM
 The figures carry no time stamp: a rerun on the same data writes the same bytes. The operator study behind the 2:1
 coupling (`seam_operators.py`) and the prototype of the James step (`james_proto.py`) are in `scripts/verification/`,
 the prototypes of the wide D(G) and of the levels inside the blocks in `scripts/prototypes/`
-([the spectral solver](/guide/spectral-solver#problems-and-methods), [the hierarchical solver](/guide/hierarchical-solver#the-method)).
+([the spectral solver](/reference/spectral#problems-and-methods), [the hierarchical solver](/reference/hierarchical#the-method)).

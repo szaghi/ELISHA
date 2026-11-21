@@ -1,0 +1,11 @@
+$ cookbook_bc
+D/N, N/D, D/D on a bounded box            ELISHA_OK
+N/N everywhere: singular, mean removed    ELISHA_OK
+periodic x, ghost-Dirichlet y, D/N z      ELISHA_OK
+a Dirichlet face on a periodic axis       ELISHA_ERR_BC_PERIODICITY
+one periodic face, one Dirichlet          ELISHA_ERR_BC_PERIODIC_PAIR
+ghost-Dirichlet with plain Dirichlet      ELISHA_ERR_BC_GHOST_PAIR
+a bounded box without kinds               ELISHA_ERR_BC_MISSING
+isolated, on a bounded box                ELISHA_OK
+isolated, with kinds                      ELISHA_ERR_ISOLATED_BC
+isolated, on a periodic axis              ELISHA_ERR_ISOLATED_PERIODIC

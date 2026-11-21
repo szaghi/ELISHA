@@ -12,7 +12,7 @@ fobis build --mode static-gnu-serial   # lib/gnu/static-serial/libelisha_serial.
 ```
 
 This is the serial library (`-DELISHA_NO_MPI`, no MPI at all). The MPI library (`static-gnu`), the other compilers and
-fpm are in [Installation](./installation).
+fpm are in [Installation](/guide/installation).
 
 ## The program
 
@@ -81,7 +81,8 @@ committed ones differ.
 
 | To | Read |
 |---|---|
-| see the facade's arguments, diagnostics and refusals | [The solver facade](./solver) |
-| run AMR, isolated boundaries, boundary kinds and error handling | [Examples](./examples) |
-| port a FLAIL client | [Coming from ADAM's FLAIL](./from-adam) |
-| see the solvers' methods and how they are checked | [The spectral solver](./spectral-solver), [the hierarchical solver](./hierarchical-solver) |
+| see the facade's arguments, diagnostics and refusals | [The solver facade](/reference/solver) |
+| go from this box to AMR, free space, boundary values, MPI and the GPU | [the Tutorial](/tutorial/) |
+| do one specific thing (self-gravity, your own fields, a failed solve) | [the Cookbook](/cookbook/) |
+| port a FLAIL client | [Coming from ADAM's FLAIL](/guide/from-adam) |
+| see the solvers' methods and how they are checked | [The spectral solver](/reference/spectral), [the hierarchical solver](/reference/hierarchical) |

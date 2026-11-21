@@ -3,8 +3,8 @@
 ELISHA is ADAM's FLAIL, bitwise first, faster second. Milestones M3 to M5 ported the solvers and held their time to
 ADAM's. M7 (2026-11-20) then made five performance changes, one at a time, each measured against ADAM in the same
 binary. This page collects those measurements. The solver pages keep their own tables of the port:
-[spectral](./spectral-solver#performance), [hierarchical](./hierarchical-solver#performance),
-[device](./device#performance). The scaling ladders, which time ELISHA alone in absolute seconds from 1 to 64 CPU
+[spectral](/reference/spectral#performance), [hierarchical](/reference/hierarchical#performance),
+[device](/reference/device#performance). The scaling ladders, which time ELISHA alone in absolute seconds from 1 to 64 CPU
 ranks and 1 to 4 GPUs, are in [Scaling (EB)](#scaling-eb).
 
 ## How it is measured
@@ -128,7 +128,7 @@ removed the multigrid's staging: its `on_device` is now 7 to 25% faster than hos
 
 `setup(..., level_operator=ELISHA_OPERATOR_STENCIL)` applies and smooths the block-interior rows of the V-cycle's level
 operators as the 7-point stencil they are, without reading their CSR entries. That is 42% of the rows on blocks of
-8^3 cells. The other rows keep CSR ([the hierarchical solver](./hierarchical-solver#stencil-level-operators)). It is
+8^3 cells. The other rows keep CSR ([the hierarchical solver](/reference/hierarchical#stencil-level-operators)). It is
 the OpenACC backend's default; on the host the default is CSR.
 
 | | CSR | Stencil |
@@ -173,7 +173,7 @@ Job 1369037 ran CSR and the stencil interleaved in one job, 15 repetitions, both
 | AMR isolated, 491 520 cells, stencil (OpenACC default) | | 0.63 / 0.63 (step 09) |
 
 On the host, after M7, ELISHA's solve stays within the noise of ADAM's. The tables of the
-[spectral](./spectral-solver#performance) and [hierarchical](./hierarchical-solver#performance) solvers hold. ELISHA's
+[spectral](/reference/spectral#performance) and [hierarchical](/reference/hierarchical#performance) solvers hold. ELISHA's
 setup is faster than ADAM's because of the key mixing of M4.
 
 ## Scaling (EB)
@@ -184,7 +184,7 @@ seconds, with no ADAM oracle in the binary. FLAIL's published numbers are quoted
 [below](#against-flail-adam-s-numbers).
 
 The multigrid rows below were measured on 2026-11-20 (job 1369135) with ADAM's V-cycle, before the symmetric
-V-cycle became the default ([the hierarchical solver](./hierarchical-solver#the-symmetric-v-cycle)). Job 1369212
+V-cycle became the default ([the hierarchical solver](/reference/hierarchical#the-symmetric-v-cycle)). Job 1369212
 (2026-11-21, the same node type, protocol and problems) re-timed the strong ladder at np 1, 16 and 64 with the
 symmetric V-cycle. The FFT rows are the control, the same code. Their minima agree with 1369135's within 0.5% at
 np 1 and within 9% at np 16 and 64. Their medians at np 16 and 64 differ by up to 50% between the two jobs, the noise
@@ -343,7 +343,7 @@ much as about 80 solves at np 1.
 
 Job 1369224 (2026-11-21) re-ran the device ladder on the same protocol, problems and partition, after three changes:
 the symmetric V-cycle, the multigrid's device assembly (the OpenACC default,
-[the device backends](./device#the-root-on-the-device-and-device-resident-arrays-m7-audit-c4)), and the FFT's
+[the device backends](/reference/device#the-root-on-the-device-and-device-resident-arrays-m7-audit-c4)), and the FFT's
 `on_device` no longer copying `phi` to the host before the solve. Minimum solve time in seconds; the last column
 compares the two calling modes in this job:
 
@@ -438,7 +438,7 @@ the maximum over the ranks. ADAM's table does not record the nodes.
     against FLAIL's 0.24 s and 1.5 s.
 - **FFT at np 1 on the CPU** is 8% (periodic) and 13% (isolated) slower than FLAIL's table. This comparison is
   across dates and builds. In the paired benches of the same binary, ELISHA's spectral solve stays within the noise
-  of ADAM's ([spectral solver](./spectral-solver#performance)).
+  of ADAM's ([spectral solver](/reference/spectral#performance)).
 - **FNL.**
   - The multigrid is 1.2 to 1.3 times faster than FLAIL's FNL at every np: 0.103 s against 0.12 s periodic and
     0.342 s against 0.43 s isolated at np 4. That fits the M7 device root and stencil operators (E/A 0.81 to 0.83 in

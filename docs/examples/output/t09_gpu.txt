@@ -1,0 +1,4 @@
+$ t09_gpu
+device backends and on_device: F
+spectral    : FCG  0, max error 8.01E-04, values differing between on_device and host arrays 0
+hierarchical: FCG 15, max error 1.19E-03, values differing between on_device and host arrays 0

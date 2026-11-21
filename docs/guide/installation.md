@@ -1,10 +1,21 @@
 # Installation
 
+## One line
+
+The installer downloads the latest release, builds the serial library with the build system you have (FoBiS, fpm,
+CMake or make) and installs it under `~/.local`, one directory per compiler, with a `pkg-config` file:
+
+```bash
+curl -fsSL https://github.com/szaghi/ELISHA/releases/latest/download/install.sh | bash -s -- --gnu
+```
+
+`--help` lists the options (`--prefix`, `--tag`, `--intel`, `--nvidia`, `--dry-run`, `--uninstall`, ...).
+
 ## FoBiS
 
 ```bash
 git clone https://github.com/szaghi/ELISHA && cd ELISHA
-fobis fetch                      # PENF, into src/third_party/
+fobis fetch                      # PENF, into src/third_party/ (and GIDEON, for one test)
 fobis build --mode static-gnu    # lib/gnu/static/libelisha.a (shared-gnu: libelisha.so)
 ```
 
@@ -14,12 +25,17 @@ fobis build --mode static-gnu    # lib/gnu/static/libelisha.a (shared-gnu: libel
 the compute capability; cc89 by default). Every mode compiles with `-D_FFTW`; a program that uses ELISHA links
 `-lfftw3`. ELISHA computes in double precision only (`R_P = R8P`): a single-precision build stops at compile time.
 
+The device library (cuFFT and OpenACC, nvfortran): `fobis build --mode static-nvf-oac --varset cc80` (A100/A30;
+`cc89` RTX 40, `cc90` H100), then `use elisha_device` ([The device backends](/reference/device)).
+
 ## fpm
 
 ```toml
 [dependencies]
 ELISHA = { git = "https://github.com/szaghi/ELISHA", branch = "main" }
 ```
+
+fpm builds the serial library (`-DELISHA_NO_MPI`) with FFTW: link `-lfftw3`.
 
 ## Known compiler issues
 

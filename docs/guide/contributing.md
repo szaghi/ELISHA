@@ -30,6 +30,23 @@ is welcome. The project follows a KISS (Keep It Simple and Stupid) philosophy.
 5. Check for unnecessary whitespace: `git diff --check`
 6. Submit a pull request with a clear commit message
 
+## Documentation
+
+The pages are VitePress (`docs/`); `fobis rule --ex makedoc` builds them, the API pages included (formal).
+
+- **Examples.** Every program in `docs/examples/src/` is a tutorial chapter, a recipe or a guide example. Its regions
+  (`!region NAME ... !endregion NAME`) are what the pages include, its `!run` lines the runs they show.
+  `bash scripts/docs_examples.sh` rebuilds the snippets and outputs; commit them with the source, or CI (Docs
+  examples) fails. A program prints only machine-independent values: rounded errors, logicals for round-off checks,
+  never timings or full-precision residuals.
+- **MPI and GPU outputs** are captured by hand into `docs/examples/mpi/` and `docs/examples/device/`, the build and
+  the machine on each file's first line; rerun them when the program changes.
+- **Figures and animations.** `bash scripts/docs_figures.sh [NAME ...]` runs the tutorial programs with `dump` and
+  draws `docs/public/tutorial/` on both grounds (`docs/scripts/make_doc_figures.py`, colours in
+  `docs/scripts/elisha_palette.py`; numpy, scipy, matplotlib, ffmpeg). The figures are committed; CI does not redraw
+  them.
+- **The identity** (the mark, icons, tokens and their generator) is in `docs/brand/`.
+
 ## Fortran Coding Style
 
 - **Clarity over brevity**: `real :: gas_ideal_air` is better than `real :: gia`

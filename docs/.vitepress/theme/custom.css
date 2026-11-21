@@ -97,3 +97,132 @@
   outline: 2px solid var(--elisha-focus);
   outline-offset: 2px;
 }
+
+/* ---------- Layout (not identity): hero sizes as on the other szaghi.github.io sites ----------
+   The expanded acronym and the tagline are long; at VitePress' default size the subtitle outweighs the hero name. */
+.VPHero .name .clip {
+  background: none;
+  -webkit-text-fill-color: var(--vp-home-hero-name-color);
+  color: var(--vp-home-hero-name-color);
+}
+.VPHero .image-src { max-width: 320px; max-height: 320px; }
+.VPFeature .icon { width: 52px; height: 52px; background-color: transparent; }
+@media (min-width: 640px) {
+  .VPHero .text { font-size: 36px; line-height: 44px; }
+  .VPHero .tagline { font-size: 19px; line-height: 30px; }
+}
+@media (min-width: 960px) {
+  .VPHero .name, .VPHero .name .clip { font-size: 64px; line-height: 72px; }
+  .VPHero .text { font-size: 40px; line-height: 50px; }
+  .VPHero .tagline { font-size: 20px; line-height: 32px; }
+}
+
+/* ---------- Figures (not identity tokens) ----------
+   The figures are drawn twice (docs/scripts/make_doc_figures.py): on washi, and as <name>-dark.png on the night
+   ground, swapped in by index.ts (class elisha-dark-twin). A figure without a twin (the verification plates) is shown
+   in the dark theme as a washi card, the way a printed plate sits on a dark table. */
+.dark .vp-doc img[src$=".png"] {
+  background: #f4ece0;
+  border-radius: 6px;
+  padding: 6px;
+}
+.dark .vp-doc img.elisha-dark-twin {
+  background: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* ---------- Layout (not identity): casts and galleries ----------
+   Casts (.elisha-casts: the theme-aware videos, .light-only / .dark-only of config.mts) and figure cards
+   (.elisha-gallery: one markdown link per paragraph, image + <strong> title + <span> caption). One column on phones,
+   two from 640 px. Flat: borders from the theme tokens, no shadows, no gradients. */
+.vp-doc .elisha-casts,
+.vp-doc .elisha-gallery {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin: 16px 0 24px;
+}
+@media (min-width: 640px) {
+  .vp-doc .elisha-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vp-doc .elisha-casts { display: flex; flex-wrap: wrap; align-items: stretch; }
+  .vp-doc .elisha-casts .elisha-cast { flex: var(--ar, 1.5) 1 0; min-width: 0; }
+  .vp-doc .elisha-casts .elisha-cast-wide { flex-basis: 100%; }
+}
+.vp-doc .elisha-cast {
+  margin: 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--vp-c-bg-soft);
+}
+.vp-doc .elisha-cast video { width: 100%; height: auto; vertical-align: top; }
+.vp-doc .elisha-cast figcaption,
+.vp-doc .elisha-gallery span {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vp-c-text-2);
+}
+.vp-doc .elisha-cast figcaption { padding: 8px 12px 10px; }
+.vp-doc .elisha-gallery p { margin: 0; }
+.vp-doc .elisha-gallery a {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-1);
+  text-decoration: none;
+}
+.vp-doc .elisha-gallery a:hover { border-color: var(--vp-c-brand-1); }
+.vp-doc .elisha-gallery img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #f4ece0;
+  border-radius: 0;
+  padding: 6px;
+}
+.dark .vp-doc .elisha-gallery img.elisha-dark-twin { background: #140d0a; padding: 6px; }
+.vp-doc .elisha-gallery strong { padding: 8px 12px 0; font-size: 14px; }
+.vp-doc .elisha-gallery span { padding: 2px 12px 10px; }
+
+/* ---------- Layout (not identity): home sections below the features ----------
+   Quick start, authors and license, as in the README (the layout of the SETH and mosaic homes): centred headings and
+   leads, code and tables at a reading width. The authors are VitePress' own VPTeamMembers cards. */
+.elisha-home {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: 2rem 24px 1rem;
+}
+.elisha-home h2 {
+  border-top: 0;
+  margin-top: 2.5rem;
+  text-align: center;
+}
+.elisha-home .elisha-lead {
+  text-align: center;
+  color: var(--vp-c-text-2);
+  max-width: 720px;
+  margin: 0.5rem auto 1.5rem;
+}
+.elisha-home div[class*='language-'],
+.elisha-home .vp-code-group {
+  max-width: 820px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.elisha-home table { display: table; margin: 0 auto; }
+.VPHome .VPTeamMembers {
+  max-width: 1152px;
+  margin: 0 auto 1rem;
+  padding: 0 24px;
+}
+/* the authors' avatars are photos, not figures: no washi card in the dark theme */
+.dark .vp-doc .VPTeamMembers img[src$=".png"] {
+  background: none;
+  border-radius: 50%;
+  padding: 0;
+}

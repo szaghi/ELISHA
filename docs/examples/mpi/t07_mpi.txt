@@ -1,0 +1,18 @@
+$ mpirun -np 1 t07_mpi bits  # fobis build --mode static-gnu (gfortran 16.2.0, Open MPI 5.0.11), mpifort -cpp t07_mpi.F90 libelisha.a -lfftw3 (captured 2026-11-21)
+ranks 1
+spectral    : leaves per rank 64 to 64, FCG  0, energy -1.059E-03, max error 3.17E-03
+   max phi, bits 3F81193196ACB9FE
+hierarchical: leaves per rank 71 to 71, FCG 15, energy -1.059E-03, max error 4.25E-03
+   max phi, bits 3F81191D1FBB1398
+$ mpirun -np 2 t07_mpi bits
+ranks 2
+spectral    : leaves per rank 32 to 32, FCG  0, energy -1.059E-03, max error 3.17E-03
+   max phi, bits 3F81193196ACB9FE
+hierarchical: leaves per rank 35 to 36, FCG 15, energy -1.059E-03, max error 4.25E-03
+   max phi, bits 3F81191D1FBB1397
+$ mpirun -np 4 t07_mpi bits
+ranks 4
+spectral    : leaves per rank 16 to 16, FCG  0, energy -1.059E-03, max error 3.17E-03
+   max phi, bits 3F81193196ACB9FE
+hierarchical: leaves per rank 17 to 18, FCG 15, energy -1.059E-03, max error 4.25E-03
+   max phi, bits 3F81191D1FBB1397

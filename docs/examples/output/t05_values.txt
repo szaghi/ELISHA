@@ -1,0 +1,5 @@
+$ t05_values
+  cells/block   FCG   max |phi - u| / max |u|
+       8^3       11        2.145E-03
+      16^3       10        5.695E-04
+  order  1.91

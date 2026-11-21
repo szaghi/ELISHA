@@ -1,0 +1,5 @@
+$ t03_isolated
+isolated, spectral path:     max error  9.41E-03
+isolated, hierarchical path: max error  9.41E-03
+periodic:                    max error  2.42E-01
+the two isolated paths agree to 1e-10: T
