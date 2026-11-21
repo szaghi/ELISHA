@@ -35,10 +35,24 @@ assume a field layout.
 | Zero-ghost faces with D(G) | CG on rank 0, preconditioned by the p = 2 operator inverted exactly (2^z FFT sub-solves) | 1e-12 |
 | Free-space ghosts with D(G) | The zero-ghost solve with the ghosts' free-space potential on the right-hand side | 1e-12 |
 
-ADAM's prototypes (`wide_dg_proto.py`, `wide_dg_zero_ghost.py`) measured the CG of D(G) with zero-ghost faces at 1, 17,
-24 and 30 iterations for p = 2, 4, 6, 8, independent of the grid. A compact preconditioner would need O(N) iterations
-(86 to 677 at p = 2, N = 32 to 256), because it does not see the checkerboard branch. Every solve is a symmetric linear
-map of the source, which exact energy and momentum conservation of self-gravity needs.
+ADAM's prototypes, now in `scripts/prototypes/`, measured the CG of D(G) with zero-ghost faces at 1, 17, 24 and 30
+iterations for p = 2, 4, 6, 8, independent of the grid (N = 32 to 128): the last column of
+[`wide_dg_zero_ghost.py`](https://github.com/szaghi/ELISHA/blob/main/scripts/prototypes/wide_dg_zero_ghost.py), and
+[`wide_dg_e2b.py`](https://github.com/szaghi/ELISHA/blob/main/scripts/prototypes/wide_dg_e2b.py) with a reflected axis
+beside, odd and even. A compact preconditioner would need O(N) iterations (86 to 677 at p = 2, N = 32 to 256, on the
+periodic grid: the `PCG compact` column of
+[`wide_dg_proto.py`](https://github.com/szaghi/ELISHA/blob/main/scripts/prototypes/wide_dg_proto.py)), because it does
+not see the checkerboard branch. Every solve is a symmetric linear map of the source, which exact energy and momentum
+conservation of self-gravity needs.
+
+```bash
+python3 scripts/prototypes/wide_dg_zero_ghost.py   # 1, 17, 24, 30 (about 7 minutes)
+python3 scripts/prototypes/wide_dg_e2b.py          # the same, with a reflected axis beside (about 10 s)
+python3 scripts/prototypes/wide_dg_proto.py        # the compact preconditioner, 86 to 677 (about 1.5 minutes)
+```
+
+ELISHA's own CG counts on its verification problems are in the `zero` leg of `scripts/verification/poisson.sh`
+(`exe/elisha_sv_bc_mpi --zero`): 1, 18 to 19, 26 and 31 to 32 for p = 2, 4, 6, 8, the same at 16 and 32 cells per axis.
 
 The data path is ADAM's distributed slab transform: z-planes per rank, `MPI_ALLTOALLV` to z-lines, and every block
 fetches its cells with their ghosts from the owners, so no ghost exchange follows. The potential is bitwise the same

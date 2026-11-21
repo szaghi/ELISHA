@@ -103,7 +103,8 @@ ADAM's own documentation (`docs/flail.md`, ADAM 669d0bdd) times FLAIL on medooza
 the repetitions and the maximum over the ranks. **These are ADAM's numbers, not ELISHA's measurements.** ELISHA's own
 timings against ADAM, measured in pairs, are in the Performance sections of [the spectral
 solver](./spectral-solver#performance), [the hierarchical solver](./hierarchical-solver#performance) and [the device
-backends](./device#performance).
+backends](./device#performance). The scaling ladders that were ADAM's multi-node evidence now run on ELISHA's own
+program: [Scaling (EB)](./performance#scaling-eb).
 
 | Solver | Grid | Backend | Problem | 1 | 2 | 4 | 16 ranks / GPUs |
 |--------|------|---------|---------|---|---|---|-----------------|

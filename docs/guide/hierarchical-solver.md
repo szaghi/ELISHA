@@ -36,8 +36,14 @@ call mg%solve_packed(mesh, buf, factor, phi, stat, errmsg, energy=e, ghost=g)
 | Distribution | CSR rows over global cell keys, one halo plan per operator |
 
 The root follows Athena++ (Tomida and Stone 2023, section 3). ADAM measured what coarsening inside the blocks costs
-(`test_poisson_mg --sub`): 1 to 14 FCG iterations on a uniform box of 1:2:3 cells, from point smoothing on anisotropic
-cells, and 1 to 13 more on AMR. In exchange, no V-cycle gathers the base grid on rank 0.
+(`test_poisson_mg --sub`, now the `sub` leg of `scripts/verification/poisson.sh`, `exe/elisha_sv_mg_mpi --sub`): 1 to
+14 FCG iterations on a uniform box of 1:2:3 cells, from point smoothing on anisotropic cells, and 1 to 13 more on AMR
+(36 to 47, 24 to 25, 39 to 41, 40 to 53 and 47 to 52 in its five AMR configurations). On cubic cells, where the exact
+coarsest level takes 1 iteration, the same levels take 8 (periodic) and 11 to 15 (ghost-Dirichlet faces), and
+trilinear prolongation gains nothing over piecewise constant: the `exact`, `pc` and `tl` columns of
+[`mg_subblock_e5c.py`](https://github.com/szaghi/ELISHA/blob/main/scripts/prototypes/mg_subblock_e5c.py)
+(`python3 scripts/prototypes/mg_subblock_e5c.py`, about 1.5 minutes). In exchange, no V-cycle gathers the base grid on
+rank 0.
 
 **Boundary faces.** A bounded face has a kind. Its row stays homogeneous, so the operator stays symmetric, and its
 value `g` goes to the right-hand side through `B`. Here `w` is the face area over the spacing, `h` the spacing and
