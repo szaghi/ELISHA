@@ -97,7 +97,7 @@ endtype elisha_hierarchical_solver_oac_object
 contains
    ! public methods
    subroutine setup_oac(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells, &
-                        level_operator, vcycle)
+                        level_operator, vcycle, assembly)
    !< As `elisha_hierarchical_solver_object%setup`; without `coarse`, the coarsest level (and the James step's Green's
    !< function) on cuFFT; without `level_operator`, the stencil (`ELISHA_OPERATOR_STENCIL`, the host's default is CSR).
    !< Then the operators and the work vectors go to the device.
@@ -115,6 +115,7 @@ contains
    integer(I4P),                   intent(in),           optional     :: level_operator !< The level operators' form
                                                                                          !< (default: the stencil).
    integer(I4P),                   intent(in),           optional     :: vcycle    !< The V-cycle (default: symmetric).
+   integer(I4P),                   intent(in),           optional     :: assembly  !< Where a solve is assembled.
    type(elisha_spectral_solver_cufft_object)                          :: cufft_mold !< The cuFFT root, by default.
    integer(I4P)                                                       :: code      !< Status of the placement.
    integer(I4P)                                                       :: lop       !< The level operators' form.
@@ -128,12 +129,13 @@ contains
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=coarse, isolated=isolated, bc=bc, root_cells=root_cells, &
-                                                        level_operator=lop, vcycle=vcycle)
+                                                        level_operator=lop, vcycle=vcycle, assembly=assembly)
    else
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=cufft_mold, isolated=isolated, bc=bc,             &
-                                                        root_cells=root_cells, level_operator=lop, vcycle=vcycle)
+                                                        root_cells=root_cells, level_operator=lop, vcycle=vcycle, &
+                                                        assembly=assembly)
    endif
    if (stat /= ELISHA_OK) return
    call self%work_place(attach=.true., stat=code)

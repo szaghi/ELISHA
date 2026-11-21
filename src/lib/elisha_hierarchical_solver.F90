@@ -64,6 +64,13 @@ module elisha_hierarchical_solver
 !<   V-cycle is then symmetric (`vcycle_symmetry_defect`), E1c converges in 15 iterations and every AMR solve of the
 !<   verification takes 19-35% fewer (uniform meshes have no seam: unchanged). `setup(..., vcycle=ELISHA_VCYCLE_ADAM)`
 !<   keeps ADAM's V-cycle, for the bitwise parity with the verbatim oracle.
+!< - a device backend's assembly of a solve (ELISHA notes "device assembly", `setup(..., assembly=)`): the FCG solve is
+!<   a public binding (`solve_fcg => hierarchical_solve_fcg`, ADAM's code, unchanged) that a device backend overrides
+!<   to call `hierarchical_solve_fcg_device`, the same FCG with the right-hand side and the fill through two hooks,
+!<   `assemble_rhs` and `fill_potential`. A twin, not a shared loop: ifx -O3 contracts and orders reductions by the
+!<   code's shape, and either moving ADAM's assembly into a procedure or adding the hooks' calls to solve_fcg broke the
+!<   bitwise parity of one case (the slab-root AMR one; measured, bisected). The host solver assembles on the host only
+!<   (`ELISHA_ASSEMBLY_HOST`).
 !< What did not change: every floating-point expression, every loop and its order, every accumulation, the assembly
 !< order of the triplets and the CSR rows, the halo plans, the FCG and V-cycle sequence and the MPI calls, so with
 !< `vcycle=ELISHA_VCYCLE_ADAM` (and on every uniform mesh) the potential, the iterations and the residual are meant to
@@ -165,7 +172,8 @@ use elisha_mesh, only : elisha_mesh_object
 use elisha_keys, only : elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_table, ELISHA_KEY_LEVEL_OFFSET
 use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
                               ELISHA_BC_ZERO_GHOSTS, ELISHA_PATH_HIERARCHICAL, ELISHA_OPERATOR_CSR, &
-                              ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM
+                              ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM, &
+                              ELISHA_ASSEMBLY_HOST, ELISHA_ASSEMBLY_DEVICE
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_INTERNAL, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE, &
                           ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_GHOST_VALUES, ELISHA_ERR_ARGUMENT, &
                           ELISHA_ERR_NOT_CONVERGED, elisha_set_error
@@ -178,6 +186,7 @@ private
 public :: elisha_hierarchical_solver_object
 public :: dcsr, rvec, ivec
 public :: MG_SEAM_GHOST_SCALE
+public :: hierarchical_solve_fcg, hierarchical_solve_fcg_device
 
 real(R_P),    parameter :: MG_SEAM_GHOST_SCALE=1.5_R_P !< 2:1 fine-side ghost: phi_g = phi_f - (mean_f - phi_C) / 1.5, the
                                                      !< composite operator's face gradient (clients that invert it, as
@@ -308,6 +317,8 @@ type :: elisha_hierarchical_solver_object
    integer(I4P)              :: sweeps=2_I4P           !< Red-black sweeps per level, down and up.
    integer(I4P)              :: level_operator=ELISHA_OPERATOR_CSR !< The level operators' form (M7, audit C2).
    integer(I4P)              :: vcycle_form=ELISHA_VCYCLE_SYMMETRIC !< The V-cycle (ELISHA notes E1c).
+   integer(I4P)              :: assembly=ELISHA_ASSEMBLY_HOST !< Where a solve is assembled (a device backend: device).
+   logical                   :: buf_device=.false.    !< The current solve's buf and phi are device arrays (on_device).
    integer(I4P)              :: iterations=0_I4P       !< Iterations of the last solve.
    real(R_P)                 :: residual=0._R_P        !< Relative residual of the last solve.
    real(R_P)                 :: tolerance_used=0._R_P  !< Stop tolerance of the last solve (the round-off floor of the
@@ -353,6 +364,8 @@ type :: elisha_hierarchical_solver_object
       procedure, nopass     :: vec_update  !< A work vector between the host and where the hooks compute.
       procedure, pass(self) :: work_place  !< Put (or release) the operators and work vectors where the hooks compute.
       procedure, pass(self) :: root_solve  !< The V-cycle's root: e = L^-1 (r / V) by the spectral solver (M7, C4).
+      procedure, pass(self) :: assemble_rhs   !< A solve's right-hand side, stop tolerance and initial guess.
+      procedure, pass(self) :: fill_potential !< phi from the solution (interior, ghost fill) and the energy.
       procedure, pass(self) :: stage_source    !< `solve_packed(on_device)`: the device source to a host copy (M7, C4).
       procedure, pass(self) :: stage_potential !< `solve_packed(on_device)`: phi between the device and the host.
       ! private methods
@@ -364,7 +377,8 @@ type :: elisha_hierarchical_solver_object
       procedure, pass(self), private :: face_cells  !< The fine cells of a coarse face.
       procedure, pass(self), private :: face_weight !< V-weighted face weight (area over distance) at a level.
       procedure, pass(self), private :: ghost_green !< Isolated: g = -G s, the ghost-to-ghost Green's function.
-      procedure, pass(self), private :: solve_fcg   !< The FCG solve with given ghost values (or none).
+      procedure, pass(self) :: solve_fcg => hierarchical_solve_fcg !< The FCG solve with given ghost values (or none);
+                                                               !< a device backend overrides it (its assembly).
       procedure, pass(self), private :: solve_packed_host !< `solve_packed` on host arrays.
       procedure, pass(self), private :: lin         !< Linear index of a cell in a leaf block.
       procedure, pass(self), private :: make_work   !< Allocate the work vectors and the level maps.
@@ -438,13 +452,15 @@ contains
    self%has_guess = .false.
    self%level_operator = ELISHA_OPERATOR_CSR
    self%vcycle_form = ELISHA_VCYCLE_SYMMETRIC
+   self%assembly = ELISHA_ASSEMBLY_HOST
+   self%buf_device = .false.
    self%converged = .true.
    self%comm = elisha_comm_object() ! a copy: the caller frees its communicator
    self%is_initialized = .false.
    endsubroutine destroy
 
    subroutine setup(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells, &
-                    level_operator, vcycle)
+                    level_operator, vcycle, assembly)
    !< Check the mesh and the arguments; take the leaves, derive the hierarchy, assemble the operator, the ghost fill and
    !< the preconditioner, set up the root solver: of the dynamic type of `coarse` when given (a device backend passes
    !< its spectral solver), the host (FFTW) one otherwise. With `isolated` (issue #87), also the ghost-to-ghost Green's
@@ -457,7 +473,9 @@ contains
    !< `level_operator` (M7, audit C2): `ELISHA_OPERATOR_CSR` (this host solver's default) or `ELISHA_OPERATOR_STENCIL` (the
    !< block-interior rows of the level operators as a stencil; the OpenACC backend's default), else `ELISHA_ERR_ARGUMENT`.
    !< `vcycle` (ELISHA notes E1c): `ELISHA_VCYCLE_SYMMETRIC` (the default) or `ELISHA_VCYCLE_ADAM` (ADAM's V-cycle, not
-   !< symmetric on AMR, for the bitwise parity with ADAM), else `ELISHA_ERR_ARGUMENT`.
+   !< symmetric on AMR, for the bitwise parity with ADAM), else `ELISHA_ERR_ARGUMENT`. `assembly`:
+   !< `ELISHA_ASSEMBLY_HOST`, this host solver's only one; `ELISHA_ASSEMBLY_DEVICE` needs a device backend (its own
+   !< setup takes it), else `ELISHA_ERR_ARGUMENT`.
    class(elisha_hierarchical_solver_object), intent(inout)        :: self      !< The solver.
    type(elisha_mesh_object),       intent(inout)                  :: mesh      !< The mesh (validated here if not yet).
    type(elisha_comm_object),       intent(in)                     :: comm      !< Communication context (initialised).
@@ -474,6 +492,8 @@ contains
                                                                                     !< or ELISHA_OPERATOR_STENCIL.
    integer(I4P),                   intent(in),           optional :: vcycle !< ELISHA_VCYCLE_SYMMETRIC (default) or
                                                                             !< ELISHA_VCYCLE_ADAM.
+   integer(I4P),                   intent(in),           optional :: assembly !< ELISHA_ASSEMBLY_HOST (the host
+                                                                              !< solver) or _DEVICE (a device backend).
    type(elisha_spectral_solver_object) :: host_fft   !< The host spectral solver (its root_cells_max, without coarse).
    integer(I4P), allocatable :: cnt(:,:)             !< Level blocks per rank and level.
    integer(I4P)              :: d, n, id, l, b, p    !< Counters.
@@ -507,6 +527,18 @@ contains
          return
       endif
       self%vcycle_form = vcycle
+   endif
+   if (present(assembly)) then
+      if (all(assembly /= [ELISHA_ASSEMBLY_HOST, ELISHA_ASSEMBLY_DEVICE])) then
+         call elisha_set_error(stat, errmsg, ELISHA_ERR_ARGUMENT, HERE//': assembly is not ELISHA_ASSEMBLY_HOST '// &
+                               'or ELISHA_ASSEMBLY_DEVICE')
+         return
+      endif
+      if (assembly == ELISHA_ASSEMBLY_DEVICE) then ! a device backend sets it after this setup (its own setup)
+         call elisha_set_error(stat, errmsg, ELISHA_ERR_ARGUMENT, HERE//': ELISHA_ASSEMBLY_DEVICE needs a device '// &
+                               'backend (the host solver assembles on the host)')
+         return
+      endif
    endif
    if (present(isolated)) self%isolated = isolated
    call elisha_check_isolated(self%isolated, present(bc), 0_I4P, mesh%null, mesh%periodic, mesh%dx0, stat, errmsg)
@@ -1207,7 +1239,7 @@ contains
    self%converged = self%converged .and. conv0
    endsubroutine solve_packed_host
 
-   subroutine solve_fcg(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
+   subroutine hierarchical_solve_fcg(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
    !< Solve from the packed interior source of this rank's leaves (block-major, `i` fastest): FCG on the operator,
    !< preconditioned by the V-cycle, from the previous solution when there is one; then the ghost fill. The arguments
    !< are checked (`solve_packed`).
@@ -1353,7 +1385,115 @@ contains
       call self%comm%sum_real8(x1, stat) ; if (stat /= ELISHA_OK) return
       energy = x1(1)
    endif
-   endsubroutine solve_fcg
+   endsubroutine hierarchical_solve_fcg
+
+   subroutine hierarchical_solve_fcg_device(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
+   !< `solve_fcg` with a device backend's assembly (ELISHA notes "device assembly"): the same FCG, statement for
+   !< statement, the right-hand side by the hook `assemble_rhs` and phi and the energy by `fill_potential`. A copy, not
+   !< a shared loop: solve_fcg stays ADAM's code in ADAM's shape (ifx -O3 decides contraction and reduction order by
+   !< it; extracting the loop or adding the hooks' calls to solve_fcg broke the bitwise parity of one case, measured).
+   class(elisha_hierarchical_solver_object), intent(inout) :: self    !< The solver.
+   type(elisha_mesh_object),       intent(in)            :: mesh    !< The mesh.
+   real(R_P),                      intent(in)            :: buf(1:) !< Packed interior source.
+   real(R_P),                      intent(in)            :: factor  !< Source factor.
+   real(R_P),    intent(inout) :: phi(1-self%ngc:,1-self%ngc:,1-self%ngc:,1:) !< Potential [i,j,k,nb].
+   integer(I4P),                   intent(out)           :: stat    !< Status.
+   character(:), allocatable,      intent(out), optional :: errmsg  !< Message.
+   real(R_P),                      intent(out), optional :: energy  !< sum_cells V f phi (all ranks).
+   real(R_P),                      intent(in),  optional :: ghost(1:) !< The boundary value per boundary face.
+   real(R_P)              :: fmax, alpha, beta, vsum, mean, r0 !< Scalars.
+   real(R_P)              :: tol          !< The stop tolerance.
+   real(R_P)              :: d1, d2       !< The two reductions of a ratio (ADAM's vec_dot(..) / vec_dot(..)).
+   integer(I4P)           :: n, it, nn    !< Counters.
+   logical                :: has_prev                          !< A previous direction exists.
+
+   n = mesh%nb * self%ncb
+   nn = max(n,1)
+   ! the right-hand side, the stop tolerance and the initial guess, by the device backend (a hook)
+   call self%assemble_rhs(buf=buf, factor=factor, n=n, fmax=fmax, vsum=vsum, stat=stat, ghost=ghost)
+   if (stat /= ELISHA_OK) return
+   tol = self%tolerance_used
+   call self%apply(self%a, self%u, self%wq, stat) ; if (stat /= ELISHA_OK) return
+   call self%vec_lincomb(self%wf, -1._R_P, self%wq, self%wr, n)
+   r0 = self%vec_relmax(self%wr, self%vol, n, fmax, stat) ; if (stat /= ELISHA_OK) return
+   self%iterations = 0
+   self%residual = r0
+   has_prev = .false.
+   do it=1, self%max_iterations
+      if (self%residual <= tol .or. fmax == 0._R_P) exit
+      call self%vcycle(self%wr, self%wz, stat, errmsg) ; if (stat /= ELISHA_OK) return
+      if (self%singular) then
+         mean = self%vec_dot(self%wz, self%vol, n, stat) / vsum ; if (stat /= ELISHA_OK) return
+         call self%vec_axpy(-mean, self%w1, self%wz, n)
+      endif
+      call self%vec_copy(self%wz, self%wp, nn)
+      if (has_prev) then
+         d1 = self%vec_dot(self%wz, self%wqp, n, stat) ; if (stat /= ELISHA_OK) return
+         d2 = self%vec_dot(self%wpp, self%wqp, n, stat) ; if (stat /= ELISHA_OK) return
+         beta = d1 / d2
+         call self%vec_lincomb(self%wz, -beta, self%wpp, self%wp, n)
+      endif
+      call self%apply(self%a, self%wp, self%wq, stat) ; if (stat /= ELISHA_OK) return
+      d1 = self%vec_dot(self%wp, self%wr, n, stat) ; if (stat /= ELISHA_OK) return
+      d2 = self%vec_dot(self%wp, self%wq, n, stat) ; if (stat /= ELISHA_OK) return
+      alpha = d1 / d2
+      call self%vec_axpy(alpha, self%wp, self%u, n)
+      call self%vec_axpy(-alpha, self%wq, self%wr, n)
+      call self%vec_copy(self%wp, self%wpp, nn)
+      call self%vec_copy(self%wq, self%wqp, nn)
+      has_prev = .true.
+      self%iterations = it
+      self%residual = self%vec_relmax(self%wr, self%vol, n, fmax, stat) ; if (stat /= ELISHA_OK) return
+   enddo
+   ! the residual is reduced over the ranks: every rank agrees (ADAM printed a warning on rank 0 here and went on)
+   self%converged = .not.(self%residual > tol .and. fmax > 0._R_P)
+   self%factor_mean = 0._R_P
+   if (self%iterations > 0 .and. r0 > 0._R_P .and. self%residual > 0._R_P) &
+      self%factor_mean = (self%residual / r0)**(1._R_P / self%iterations)
+   ! remove the solution's mean, keep it for the next solve, fill phi
+   if (self%singular) then
+      mean = self%vec_dot(self%u, self%vol, n, stat) / vsum ; if (stat /= ELISHA_OK) return
+      call self%vec_axpy(-mean, self%w1, self%u, n)
+   endif
+   self%has_guess = .true.
+   ! phi (the interior, the ghost fill) and the energy, by the device backend (a hook)
+   call self%fill_potential(mesh=mesh, buf=buf, phi=phi, n=n, stat=stat, energy=energy, ghost=ghost)
+   endsubroutine hierarchical_solve_fcg_device
+
+   subroutine assemble_rhs(self, buf, factor, n, fmax, vsum, stat, ghost)
+   !< The device assembly's hook: the right-hand side `wf`, the stop tolerance (`tolerance_used`) and the initial guess
+   !< `u`, where the hooks compute. The host solver assembles inline (ADAM's code in solve_fcg): a device backend
+   !< overrides it, here `ELISHA_ERR_INTERNAL`.
+   class(elisha_hierarchical_solver_object), intent(inout) :: self      !< The solver.
+   real(R_P),                      intent(in)            :: buf(1:)   !< Packed interior source.
+   real(R_P),                      intent(in)            :: factor    !< Source factor.
+   integer(I4P),                   intent(in)            :: n         !< Cells of this rank.
+   real(R_P),                      intent(out)           :: fmax      !< max |f / V| over the ranks.
+   real(R_P),                      intent(out)           :: vsum      !< sum V over the ranks.
+   integer(I4P),                   intent(out)           :: stat      !< Status.
+   real(R_P),                      intent(in),  optional :: ghost(1:) !< The boundary value per boundary face.
+
+   fmax = 0._R_P ; vsum = 0._R_P
+   if (.false.) fmax = factor * buf(1) * n + ghost(1)
+   stat = ELISHA_ERR_INTERNAL ! the host solver assembles inline (solve_fcg); only a device backend's is called
+   endsubroutine assemble_rhs
+
+   subroutine fill_potential(self, mesh, buf, phi, n, stat, energy, ghost)
+   !< The device assembly's hook: phi from the solution `u` (the interior, the ghost fill) and the energy. The host
+   !< solver fills inline (ADAM's code in solve_fcg): a device backend overrides it, here `ELISHA_ERR_INTERNAL`.
+   class(elisha_hierarchical_solver_object), intent(inout) :: self    !< The solver.
+   type(elisha_mesh_object),       intent(in)            :: mesh    !< The mesh.
+   real(R_P),                      intent(in)            :: buf(1:) !< Packed interior source.
+   real(R_P),    intent(inout) :: phi(1-self%ngc:,1-self%ngc:,1-self%ngc:,1:) !< Potential [i,j,k,nb].
+   integer(I4P),                   intent(in)            :: n       !< Cells of this rank.
+   integer(I4P),                   intent(out)           :: stat    !< Status.
+   real(R_P),                      intent(out), optional :: energy  !< sum_cells V f phi (all ranks).
+   real(R_P),                      intent(in),  optional :: ghost(1:) !< The boundary value per boundary face.
+
+   if (.false.) phi(1,1,1,1) = buf(1) * n * mesh%nb + ghost(1)
+   if (present(energy)) energy = 0._R_P
+   stat = ELISHA_ERR_INTERNAL ! the host solver fills inline (solve_fcg); only a device backend's is called
+   endsubroutine fill_potential
 
    function symmetry_defect(self, x, y, stat) result(defect)
    !< |x . A y - y . A x| / (|x| |A y|) over the ranks, for two leaf vectors: the operator's symmetry, verified.

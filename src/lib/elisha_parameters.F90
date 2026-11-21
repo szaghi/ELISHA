@@ -32,6 +32,12 @@ module elisha_parameters
 !< cells to the coarser leaves across a 2:1 face both ways, `E_l` on the way up and its adjoint `E_l^T` on the way
 !< down, so the preconditioner is symmetric; `ELISHA_VCYCLE_ADAM` is ADAM's V-cycle, `E_l` on the way up only (not
 !< symmetric on AMR: FCG can stall, ELISHA notes E1c), kept to reproduce ADAM's results bit for bit.
+!<
+!< Where the hierarchical solver assembles a solve (`setup(..., assembly)`, ELISHA notes "device assembly"): the
+!< right-hand side (the source, the boundary terms, the singular mean), the stop's maxima, the ghost values and the
+!< energy. `ELISHA_ASSEMBLY_HOST` (the host solver's, and ADAM's: a device backend then stages them through the host)
+!< or `ELISHA_ASSEMBLY_DEVICE` (the OpenACC backend's default: every operation with arithmetic on the device; host
+!< arrays copy the results in, `on_device` arrays are filled on the device).
 use penf, only : I4P
 implicit none
 private
@@ -45,6 +51,7 @@ public :: ELISHA_BC_KINDS
 public :: ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
 public :: ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL
 public :: ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM
+public :: ELISHA_ASSEMBLY_HOST, ELISHA_ASSEMBLY_DEVICE
 
 integer(I4P), parameter :: ELISHA_BC_PERIODIC        = 0_I4P !< Periodic (both faces of the axis).
 integer(I4P), parameter :: ELISHA_BC_DIRICHLET       = 1_I4P !< Value at the face.
@@ -62,4 +69,6 @@ integer(I4P), parameter :: ELISHA_OPERATOR_CSR      = 0_I4P !< Level operators f
 integer(I4P), parameter :: ELISHA_OPERATOR_STENCIL  = 1_I4P !< Block-interior rows as a matrix-free 7-point stencil.
 integer(I4P), parameter :: ELISHA_VCYCLE_SYMMETRIC  = 0_I4P !< The seam coupling both ways: a symmetric V-cycle (default).
 integer(I4P), parameter :: ELISHA_VCYCLE_ADAM       = 1_I4P !< ADAM's V-cycle: the seam coupling on the way up only.
+integer(I4P), parameter :: ELISHA_ASSEMBLY_HOST     = 0_I4P !< The solve's right-hand side and phi assembled on the host.
+integer(I4P), parameter :: ELISHA_ASSEMBLY_DEVICE   = 1_I4P !< Assembled on the device (a device backend's default).
 endmodule elisha_parameters
