@@ -139,7 +139,8 @@ type :: mg_box
    !< array `class(elisha_hierarchical_solver_object), allocatable :: mg(:)`: nvfortran 26.9 corrupts the automatic (and
    !< the explicit) deallocation of such an array when its dynamic type adds components (the OpenACC solver's), a
    !< segfault in pgf90_dealloc_mbr03a_i8 (medooza job 1369178, --sub --device; reproduced on the host with a one-logical
-   !< extension; gfortran is clean). The library has no polymorphic arrays.
+   !< extension; gfortran is clean). The library has no polymorphic arrays. ELISHA issue #2: nvfortran 25.11-26.9, a
+   !< 20-line reproducer (a nonzero default-initialized component next to an allocatable one).
    class(elisha_hierarchical_solver_object), allocatable :: s !< The solver.
 endtype mg_box
 
