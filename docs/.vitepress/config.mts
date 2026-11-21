@@ -4,7 +4,19 @@ export default withMermaid({
   title: 'ELISHA',
   description: 'Elliptic Laplacian Inversion: Spectral and Hierarchical Algorithms: FFT and AMR multigrid Poisson solvers for HPC',
   base: '/ELISHA/',
-  srcExclude: ['ford.md'],
+  srcExclude: ['ford.md', 'brand/**'],
+
+  // the identity (Futatsu-bi in Koyo, docs/brand/): an adaptive SVG favicon with PNG and ICO fallbacks, the touch icon,
+  // the web manifest and the theme colour of each scheme
+  head: [
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/ELISHA/favicon.svg' }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/ELISHA/favicon-32.png' }],
+    ['link', { rel: 'alternate icon', href: '/ELISHA/favicon.ico' }],
+    ['link', { rel: 'apple-touch-icon', href: '/ELISHA/apple-touch-icon.png' }],
+    ['link', { rel: 'manifest', href: '/ELISHA/site.webmanifest' }],
+    ['meta', { name: 'theme-color', content: '#f4ece0', media: '(prefers-color-scheme: light)' }],
+    ['meta', { name: 'theme-color', content: '#140d0a', media: '(prefers-color-scheme: dark)' }],
+  ],
 
   markdown: {
     math: true,
@@ -18,6 +30,9 @@ export default withMermaid({
   },
 
   themeConfig: {
+    logo: { light: '/logo-mark.svg', dark: '/logo-mark-dark.svg', alt: 'ELISHA' },
+    siteTitle: 'ELISHA',
+
     nav: [
       { text: 'Home',   link: '/' },
       { text: 'Guide',  link: '/guide/' },

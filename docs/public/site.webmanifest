@@ -1,0 +1,26 @@
+{
+  "name": "ELISHA",
+  "short_name": "ELISHA",
+  "description": "Elliptic Laplacian Inversion, Spectral and Hierarchical Algorithms",
+  "icons": [
+    {
+      "src": "/ELISHA/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/ELISHA/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/ELISHA/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#f4ece0",
+  "background_color": "#f4ece0",
+  "display": "standalone"
+}

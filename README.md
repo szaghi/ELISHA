@@ -1,3 +1,13 @@
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)"  srcset="docs/public/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/public/logo.svg">
+  <img src="docs/public/logo.svg" alt="ELISHA, two embers in a hearth" width="320">
+</picture>
+
+</div>
+
 # ELISHA
 
 **E**lliptic **L**aplacian **I**nversion: **S**pectral and **H**ierarchical **A**lgorithms: FFT and AMR multigrid
