@@ -21,7 +21,7 @@ program elisha_test_hierarchical_solver_mpi
 !< on every rank: a mesh not 2:1 balanced (`ELISHA_ERR_MESH_BALANCE`), isolated with boundary kinds
 !< (`ELISHA_ERR_ISOLATED_BC`), a solve before the setup (`ELISHA_ERR_NOT_INITIALIZED`), a `phi` of the wrong shape
 !< (`ELISHA_ERR_SHAPE`), fewer ghost values than boundary faces (`ELISHA_ERR_GHOST_COUNT`), a `vcycle` that is no
-!< `ELISHA_VCYCLE_*` (`ELISHA_ERR_ARGUMENT`); and an FCG stopped at `max_iterations` = 1 above its tolerance, on the
+!< `ELISHA_VCYCLE_*` (`ELISHA_ERR_ARGUMENT`), the device assembly on this host solver (`ELISHA_ERR_ARGUMENT`); and an FCG stopped at `max_iterations` = 1 above its tolerance, on the
 !< periodic AMR corner mesh and on the uniform isolated one with its root capped at 64 cells (`ELISHA_ERR_NOT_CONVERGED`, `converged` false, `phi` the last iterate: every
 !< value finite, ghosts included, the interior not zero), then the same solver with enough iterations converged. The FP traps of a debug
 !< build are off around `MPI_Init` only (hwloc raises IEEE flags inside it).
@@ -31,7 +31,7 @@ use mpi
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_ERR_MESH_BALANCE, ELISHA_ERR_ISOLATED_BC, ELISHA_ERR_NOT_INITIALIZED, &
                    ELISHA_ERR_SHAPE, ELISHA_ERR_GHOST_COUNT, ELISHA_ERR_ARGUMENT, ELISHA_BC_DIRICHLET_GHOST,          &
-                   ELISHA_ERR_NOT_CONVERGED,                                                                        &
+                   ELISHA_ERR_NOT_CONVERGED, ELISHA_ASSEMBLY_DEVICE,                                                &
                    ELISHA_VCYCLE_ADAM, elisha_comm_object, elisha_mesh_object, elisha_hierarchical_solver_object
 implicit none
 real(R_P),    parameter  :: TOL_MG=1.e-11_R_P       !< FCG tolerance requested.
@@ -326,6 +326,9 @@ contains
    ! a vcycle that is no ELISHA_VCYCLE_*
    call solver%setup(mesh, c, stat, msg, vcycle=7_I4P)
    call expect(stat, ELISHA_ERR_ARGUMENT, 'a vcycle that is no ELISHA_VCYCLE_*')
+   ! the device assembly on the host solver
+   call solver%setup(mesh, c, stat, msg, assembly=ELISHA_ASSEMBLY_DEVICE)
+   call expect(stat, ELISHA_ERR_ARGUMENT, 'the device assembly on the host solver')
    ! a solve before the setup (the failed setups left the solver destroyed)
    allocate(buf(max(mesh%nb*product(NIJK),1)), ghost(1))
    allocate(phi(1-NGHOST:NIJK(1)+NGHOST,1-NGHOST:NIJK(2)+NGHOST,1-NGHOST:NIJK(3)+NGHOST,1:max(mesh%nb,1)))

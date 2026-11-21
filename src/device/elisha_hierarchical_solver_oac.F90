@@ -62,9 +62,11 @@ use elisha_comm, only : elisha_comm_object, elisha_halo_plan
 use elisha_mesh, only : elisha_mesh_object
 use elisha_spectral_solver, only : elisha_spectral_solver_object
 use elisha_spectral_solver_cufft, only : elisha_spectral_solver_cufft_object
-use elisha_hierarchical_solver, only : elisha_hierarchical_solver_object, dcsr
-use elisha_parameters, only : ELISHA_OPERATOR_STENCIL
-use elisha_status, only : ELISHA_OK, ELISHA_ERR_NOT_INITIALIZED, elisha_set_error
+use elisha_hierarchical_solver, only : elisha_hierarchical_solver_object, dcsr, hierarchical_solve_fcg, &
+                                      hierarchical_solve_fcg_device
+use elisha_parameters, only : ELISHA_OPERATOR_STENCIL, ELISHA_ASSEMBLY_HOST, ELISHA_ASSEMBLY_DEVICE, &
+                              ELISHA_BC_DIRICHLET_GHOST
+use elisha_status, only : ELISHA_OK, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_ARGUMENT, elisha_set_error
 implicit none
 private
 public :: elisha_hierarchical_solver_oac_object
@@ -74,6 +76,13 @@ type, extends(elisha_hierarchical_solver_object) :: elisha_hierarchical_solver_o
    logical                :: on_device=.false. !< The operators and the work vectors are on the device.
    real(R_P), allocatable :: dsb(:)            !< Device: the halo send buffer (the largest operator's).
    real(R_P), allocatable :: dhb(:)            !< Device: the halo receive buffer (the largest operator's).
+   ! the device assembly (ELISHA notes "device assembly")
+   real(R_P),    allocatable :: dbuf(:)          !< Device: a host-array solve's source, uploaded.
+   real(R_P),    allocatable :: dghost(:)        !< Device: a solve's boundary values, uploaded.
+   integer(I4P), allocatable :: brow(:)          !< The rows with boundary faces [nbrow].
+   integer(I4P), allocatable :: bptr(:)          !< Their faces' pointers into bidx [nbrow+1].
+   integer(I4P), allocatable :: bidx(:)          !< The faces of each row, in face order (the host's order) [nbnd].
+   integer(I4P)              :: nbrow=0          !< Rows with boundary faces.
    contains
       ! public methods
       procedure, pass(self) :: setup => setup_oac !< As the host's, the coarsest level on cuFFT by default.
@@ -92,6 +101,9 @@ type, extends(elisha_hierarchical_solver_object) :: elisha_hierarchical_solver_o
       procedure, pass(self) :: root_solve  => root_solve_oac  !< The V-cycle's root on the device (M7, audit C4).
       procedure, pass(self) :: stage_source    => stage_source_oac    !< solve_packed(on_device): the source.
       procedure, pass(self) :: stage_potential => stage_potential_oac !< solve_packed(on_device): phi.
+      procedure, pass(self) :: solve_fcg       => solve_fcg_oac       !< The FCG solve: the device assembly or ADAM's.
+      procedure, pass(self) :: assemble_rhs    => assemble_rhs_oac    !< The right-hand side, on the device.
+      procedure, pass(self) :: fill_potential  => fill_potential_oac  !< phi and the energy, on the device.
 endtype elisha_hierarchical_solver_oac_object
 
 contains
@@ -99,7 +111,8 @@ contains
    subroutine setup_oac(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells, &
                         level_operator, vcycle, assembly)
    !< As `elisha_hierarchical_solver_object%setup`; without `coarse`, the coarsest level (and the James step's Green's
-   !< function) on cuFFT; without `level_operator`, the stencil (`ELISHA_OPERATOR_STENCIL`, the host's default is CSR).
+   !< function) on cuFFT; without `level_operator`, the stencil (`ELISHA_OPERATOR_STENCIL`, the host's default is CSR);
+   !< without `assembly`, the device assembly (`ELISHA_ASSEMBLY_DEVICE`; `ELISHA_ASSEMBLY_HOST` is ADAM FNL's, bitwise).
    !< Then the operators and the work vectors go to the device.
    class(elisha_hierarchical_solver_oac_object), intent(inout)        :: self      !< The solver.
    type(elisha_mesh_object),       intent(inout)                      :: mesh      !< The mesh (validated if not yet).
@@ -119,30 +132,38 @@ contains
    type(elisha_spectral_solver_cufft_object)                          :: cufft_mold !< The cuFFT root, by default.
    integer(I4P)                                                       :: code      !< Status of the placement.
    integer(I4P)                                                       :: lop       !< The level operators' form.
+   integer(I4P)                                                       :: asm       !< Where a solve is assembled.
 
    ! through the parent component the passed object is an elisha_hierarchical_solver_object: its destroy and
    ! work_place are the host's (no-ops), so the device copies of a previous setup are released here first and the new
    ! ones placed after
    call self%destroy
    lop = ELISHA_OPERATOR_STENCIL ; if (present(level_operator)) lop = level_operator
+   asm = ELISHA_ASSEMBLY_DEVICE ; if (present(assembly)) asm = assembly
+   if (all(asm /= [ELISHA_ASSEMBLY_HOST, ELISHA_ASSEMBLY_DEVICE])) then ! every rank alike: the same argument
+      call elisha_set_error(stat, errmsg, ELISHA_ERR_ARGUMENT, 'elisha_hierarchical_solver_oac_object%setup: '// &
+                            'assembly is not ELISHA_ASSEMBLY_HOST or ELISHA_ASSEMBLY_DEVICE')
+      return
+   endif
    if (present(coarse)) then
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=coarse, isolated=isolated, bc=bc, root_cells=root_cells, &
-                                                        level_operator=lop, vcycle=vcycle, assembly=assembly)
+                                                        level_operator=lop, vcycle=vcycle)
    else
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=cufft_mold, isolated=isolated, bc=bc,             &
-                                                        root_cells=root_cells, level_operator=lop, vcycle=vcycle, &
-                                                        assembly=assembly)
+                                                        root_cells=root_cells, level_operator=lop, vcycle=vcycle)
    endif
    if (stat /= ELISHA_OK) return
    call self%work_place(attach=.true., stat=code)
    if (code /= ELISHA_OK) then
       call elisha_set_error(stat, errmsg, code, 'elisha_hierarchical_solver_oac_object%setup: work_place failed')
       call self%destroy
+      return
    endif
+   self%assembly = asm ! after the host setup, which refuses the device assembly (it has no device)
    endsubroutine setup_oac
 
    ! backend hooks
@@ -334,9 +355,19 @@ contains
    call place_r(self%wf, attach) ; call place_r(self%wr, attach) ; call place_r(self%wz, attach)
    call place_r(self%wp, attach) ; call place_r(self%wq, attach) ; call place_r(self%wpp, attach)
    call place_r(self%wqp, attach) ; call place_r(self%w1, attach) ; call place_r(self%wg, attach)
+   if (attach) call group_boundary_rows(self)
+   call place_r(self%dbuf, attach) ; call place_r(self%dghost, attach)
+   call place_i(self%brow, attach) ; call place_i(self%bptr, attach) ; call place_i(self%bidx, attach)
+   if (allocated(self%bnd_w))  call place_r(self%bnd_w, attach)
+   if (allocated(self%bnd_gs)) call place_r(self%bnd_gs, attach)
+   if (allocated(self%bnd_kind)) call place_i(self%bnd_kind, attach)
+   if (allocated(self%g_bnd))  call place_i(self%g_bnd, attach)
+   if (allocated(self%g_dst))  call place_i2(self%g_dst, attach)
    if (.not.attach) then
       call place_r(self%dsb, .false.) ; call place_r(self%dhb, .false.)
       deallocate(self%dsb, self%dhb)
+      deallocate(self%dbuf, self%dghost, self%brow, self%bptr, self%bidx)
+      self%nbrow = 0
    endif
    self%on_device = attach
    endsubroutine work_place_oac
@@ -405,6 +436,141 @@ contains
       !$acc update device(phi)
    endif
    endsubroutine stage_potential_oac
+
+   subroutine solve_fcg_oac(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
+   !< The FCG solve: with the device assembly the device twin (`hierarchical_solve_fcg_device`: the right-hand side,
+   !< phi and the energy by the hooks below), else ADAM's (`hierarchical_solve_fcg`: host assembly, staged); both with
+   !< this self, so the FCG's vector hooks are the device's.
+   class(elisha_hierarchical_solver_oac_object), intent(inout) :: self    !< The solver.
+   type(elisha_mesh_object),       intent(in)            :: mesh    !< The mesh.
+   real(R_P),                      intent(in)            :: buf(1:) !< Packed interior source.
+   real(R_P),                      intent(in)            :: factor  !< Source factor.
+   real(R_P),    intent(inout) :: phi(1-self%ngc:,1-self%ngc:,1-self%ngc:,1:) !< Potential [i,j,k,nb].
+   integer(I4P),                   intent(out)           :: stat    !< Status.
+   character(:), allocatable,      intent(out), optional :: errmsg  !< Message.
+   real(R_P),                      intent(out), optional :: energy  !< sum_cells V f phi (all ranks).
+   real(R_P),                      intent(in),  optional :: ghost(1:) !< The boundary value per boundary face.
+
+   if (self%assembly == ELISHA_ASSEMBLY_DEVICE) then
+      call hierarchical_solve_fcg_device(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
+   else
+      call hierarchical_solve_fcg(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
+   endif
+   endsubroutine solve_fcg_oac
+
+   subroutine assemble_rhs_oac(self, buf, factor, n, fmax, vsum, stat, ghost)
+   !< The right-hand side on the device (the device twin's hook, `ELISHA_ASSEMBLY_DEVICE`): `wf = factor V buf` (buf
+   !< the caller's device array with `on_device`, else uploaded), the boundary terms `- w g` row by row in the host's
+   !< face order, the singular mean removed (a device sum), `fmax = max |wf / V|`, the round-off floor's
+   !< `max |factor buf|` (device maxima: exact), the stop tolerance as the host's; `u = 0` without a guess, on the
+   !< device. Nothing is downloaded; host arrays upload buf (n) and the boundary values (nbnd). Collective.
+   class(elisha_hierarchical_solver_oac_object), intent(inout) :: self      !< The solver.
+   real(R_P),                      intent(in)            :: buf(1:)   !< Packed interior source.
+   real(R_P),                      intent(in)            :: factor    !< Source factor.
+   integer(I4P),                   intent(in)            :: n         !< Cells of this rank.
+   real(R_P),                      intent(out)           :: fmax      !< max |f / V| over the ranks.
+   real(R_P),                      intent(out)           :: vsum      !< sum V over the ranks.
+   integer(I4P),                   intent(out)           :: stat      !< Status.
+   real(R_P),                      intent(in),  optional :: ghost(1:) !< The boundary value per boundary face (host).
+   real(R_P)                                             :: x1(1)     !< A scalar reduced in place.
+   real(R_P)                                             :: mean, tol, braw !< Mean, stop tolerance, max |buf|.
+   integer(I4P)                                          :: i         !< Counter.
+
+   stat = ELISHA_OK
+   ! sum V: the host's loop on the host's volumes (no transfer)
+   x1 = 0._R_P
+   do i=1, n
+      x1(1) = x1(1) + self%vol(i) * 1._R_P
+   enddo
+   call self%comm%sum_real8(x1, stat) ; if (stat /= ELISHA_OK) return
+   vsum = x1(1)
+   if (.not.self%buf_device .and. n > 0) then
+      self%dbuf(1:n) = buf(1:n)
+      call update_dev(size(self%dbuf), self%dbuf, .true.)
+   endif
+   braw = 0._R_P
+   if (n > 0) then
+      if (self%buf_device) then
+         call rhs_dev(n, size(buf), buf, factor, size(self%vol), self%vol, size(self%wf), self%wf)
+         braw = absmax_dev(n, size(buf), buf)
+      else
+         call rhs_dev(n, size(self%dbuf), self%dbuf, factor, size(self%vol), self%vol, size(self%wf), self%wf)
+         braw = absmax_dev(n, size(self%dbuf), self%dbuf)
+      endif
+   endif
+   if (present(ghost) .and. self%nbnd > 0) then
+      self%dghost(1:self%nbnd) = ghost(1:self%nbnd)
+      call update_dev(size(self%dghost), self%dghost, .true.)
+      if (self%nbrow > 0) call boundary_dev(self%nbrow, size(self%brow), self%brow, size(self%bptr), self%bptr,   &
+                                            size(self%bidx), self%bidx, size(self%bnd_w), self%bnd_w,            &
+                                            size(self%dghost), self%dghost, size(self%wf), self%wf)
+   endif
+   if (self%singular) then
+      x1 = 0._R_P
+      if (n > 0) x1(1) = sum_dev(n, size(self%wf), self%wf)
+      call self%comm%sum_real8(x1, stat) ; if (stat /= ELISHA_OK) return
+      mean = x1(1) / vsum
+      if (n > 0) call axpy_dev(-mean, size(self%vol), self%vol, size(self%wf), self%wf, n)
+   endif
+   x1 = 0._R_P
+   if (n > 0) x1(1) = relmax_dev(size(self%wf), self%wf, size(self%vol), self%vol, n)
+   call self%comm%max_real8(x1, stat) ; if (stat /= ELISHA_OK) return
+   fmax = x1(1)
+   x1 = abs(factor) * braw
+   call self%comm%max_real8(x1, stat) ; if (stat /= ELISHA_OK) return
+   tol = self%tolerance
+   if (fmax > 0._R_P) tol = max(tol, 100._R_P * epsilon(1._R_P) * x1(1) / fmax)
+   self%tolerance_used = tol
+   if (.not.self%has_guess) call fill_dev(size(self%u), self%u, 0._R_P, size(self%u))
+   endsubroutine assemble_rhs_oac
+
+   subroutine fill_potential_oac(self, mesh, buf, phi, n, stat, energy, ghost)
+   !< phi and the energy on the device (the device twin's hook, `ELISHA_ASSEMBLY_DEVICE`): the ghost-fill operator
+   !< on the device solution, each boundary row's value of its kind (the boundary values uploaded by
+   !< `assemble_rhs_oac`), the energy `sum V buf u` (a device sum). With `on_device`, phi's interior and ghosts are
+   !< written on the device (u downloaded only for the James step's host side); with host arrays, u and the final
+   !< ghost values are downloaded and copied in, no arithmetic on the host: the two are bitwise equal. Collective.
+   class(elisha_hierarchical_solver_oac_object), intent(inout) :: self    !< The solver.
+   type(elisha_mesh_object),       intent(in)            :: mesh    !< The mesh.
+   real(R_P),                      intent(in)            :: buf(1:) !< Packed interior source.
+   real(R_P),    intent(inout) :: phi(1-self%ngc:,1-self%ngc:,1-self%ngc:,1:) !< Potential [i,j,k,nb].
+   integer(I4P),                   intent(in)            :: n       !< Cells of this rank.
+   integer(I4P),                   intent(out)           :: stat    !< Status.
+   real(R_P),                      intent(out), optional :: energy  !< sum_cells V f phi (all ranks).
+   real(R_P),                      intent(in),  optional :: ghost(1:) !< The boundary value per boundary face.
+   real(R_P)                                             :: x1(1)   !< A scalar reduced in place.
+   integer(I4P)                                          :: nrow    !< Ghost-fill rows.
+
+   stat = ELISHA_OK
+   nrow = self%g%nrow
+   call self%apply(self%g, self%u, self%wg, stat) ; if (stat /= ELISHA_OK) return
+   if (nrow > 0 .and. allocated(self%g_bnd)) &
+      call ghost_values_dev(nrow, size(self%g_bnd), self%g_bnd, size(self%bnd_kind), self%bnd_kind,                &
+                            size(self%bnd_gs), self%bnd_gs, size(self%dghost), self%dghost, size(self%wg), self%wg, &
+                            present(ghost) .and. self%nbnd > 0, ELISHA_BC_DIRICHLET_GHOST)
+   if (self%buf_device) then
+      call scatter_dev(self%nijk, self%ngc, size(phi, dim=4), phi, mesh%nb, size(self%u), self%u, nrow,          &
+                       size(self%g_dst, dim=2), self%g_dst, size(self%wg), self%wg)
+      if (self%isolated) call update_dev(size(self%u), self%u, .false.) ! the James step's B^T u on the host
+   else
+      call update_dev(size(self%u), self%u, .false.)
+      call update_dev(size(self%wg), self%wg, .false.)
+      call scatter_host(self%nijk, self%ngc, size(phi, dim=4), phi, mesh%nb, size(self%u), self%u, nrow,         &
+                        size(self%g_dst, dim=2), self%g_dst, size(self%wg), self%wg)
+   endif
+   if (present(energy)) then
+      x1 = 0._R_P
+      if (n > 0) then
+         if (self%buf_device) then
+            x1(1) = energy_dev(n, size(self%vol), self%vol, size(buf), buf, size(self%u), self%u)
+         else
+            x1(1) = energy_dev(n, size(self%vol), self%vol, size(self%dbuf), self%dbuf, size(self%u), self%u)
+         endif
+      endif
+      call self%comm%sum_real8(x1, stat) ; if (stat /= ELISHA_OK) return
+      energy = x1(1)
+   endif
+   endsubroutine fill_potential_oac
 
    ! private procedures
    subroutine divide_dev(n, nx, x, v0, ny, y)
@@ -783,4 +949,236 @@ contains
       !$acc update self(x)
    endif
    endsubroutine update_dev
+
+   ! the device assembly (ELISHA notes "device assembly")
+   subroutine group_boundary_rows(self)
+   !< The boundary faces grouped by the row they bound, each row's faces in increasing face order (the host's order of
+   !< `wf(bnd_row(i)) - bnd_w(i) g(i)`, i = 1..nbnd: a corner cell's terms are subtracted in the same sequence); and
+   !< the device assembly's work vectors, the source of a host-array solve and the boundary values.
+   class(elisha_hierarchical_solver_oac_object), intent(inout) :: self !< The solver.
+   integer(I4P), allocatable :: cnt(:), first(:) !< Faces per row, the position of each row in brow.
+   integer(I4P)              :: i, r, q, nrows    !< Counters, rows of the local leaves.
+
+   if (allocated(self%dbuf)) deallocate(self%dbuf, self%dghost, self%brow, self%bptr, self%bidx)
+   allocate(self%dbuf(size(self%u)), self%dghost(max(self%nbnd,1)))
+   self%dbuf = 0._R_P ; self%dghost = 0._R_P
+   nrows = size(self%u)
+   allocate(cnt(nrows), first(nrows))
+   cnt = 0 ; first = 0
+   do i=1, self%nbnd
+      cnt(self%bnd_row(i)) = cnt(self%bnd_row(i)) + 1
+   enddo
+   self%nbrow = count(cnt > 0)
+   allocate(self%brow(max(self%nbrow,1)), self%bptr(self%nbrow+1), self%bidx(max(self%nbnd,1)))
+   self%brow = 0 ; self%bidx = 0
+   q = 0
+   do r=1, nrows ! the rows in increasing order (any order is correct: a row's terms are independent of another's)
+      if (cnt(r) == 0) cycle
+      q = q + 1
+      self%brow(q) = r
+      first(r) = q
+   enddo
+   self%bptr(1) = 1
+   do q=1, self%nbrow
+      self%bptr(q+1) = self%bptr(q) + cnt(self%brow(q))
+   enddo
+   cnt = 0
+   do i=1, self%nbnd ! increasing face order within each row
+      r = self%bnd_row(i)
+      q = first(r)
+      self%bidx(self%bptr(q) + cnt(r)) = i
+      cnt(r) = cnt(r) + 1
+   enddo
+   endsubroutine group_boundary_rows
+
+   subroutine place_i2(x, attach)
+   !< A rank-2 integer array to (`attach`, copied in) or from the device (deleted); zero-size arrays stay on the host.
+   integer(I4P), intent(inout) :: x(:,:) !< Array.
+   logical,      intent(in)    :: attach !< Put, or release.
+
+   if (size(x) == 0) return
+   if (attach) then
+      !$acc enter data copyin(x)
+   else
+      !$acc exit data delete(x)
+   endif
+   endsubroutine place_i2
+
+   subroutine rhs_dev(n, nb, b, factor, nv, vol, nf, f)
+   !< f(1:n) = factor vol(1:n) b(1:n) on the device (the host's expression and order).
+   integer(I4P), intent(in)    :: n, nb, nv, nf !< Count, sizes.
+   real(R_P),    intent(in)    :: b(nb)         !< Source (present).
+   real(R_P),    intent(in)    :: factor        !< Source factor.
+   real(R_P),    intent(in)    :: vol(nv)       !< Cell volumes (present).
+   real(R_P),    intent(inout) :: f(nf)         !< Right-hand side (present).
+   integer(I4P)                :: i             !< Counter.
+
+   !$acc parallel loop present(b, vol, f)
+   do i=1, n
+      f(i) = factor * vol(i) * b(i)
+   enddo
+   endsubroutine rhs_dev
+
+   function absmax_dev(n, nb, b) result(m)
+   !< max_{i<=n} |b_i| on the device (exact: a maximum does not depend on the order).
+   integer(I4P), intent(in) :: n, nb !< Count, size.
+   real(R_P),    intent(in) :: b(nb) !< Vector (present).
+   real(R_P)                :: m     !< Result.
+   integer(I4P)             :: i     !< Counter.
+
+   m = 0._R_P
+   !$acc parallel loop present(b) reduction(max:m)
+   do i=1, n
+      m = max(m, abs(b(i)))
+   enddo
+   endfunction absmax_dev
+
+   function sum_dev(n, nx, x) result(s)
+   !< sum_{i<=n} x_i on the device.
+   integer(I4P), intent(in) :: n, nx !< Count, size.
+   real(R_P),    intent(in) :: x(nx) !< Vector (present).
+   real(R_P)                :: s     !< Result.
+   integer(I4P)             :: i     !< Counter.
+
+   s = 0._R_P
+   !$acc parallel loop present(x) reduction(+:s)
+   do i=1, n
+      s = s + x(i)
+   enddo
+   endfunction sum_dev
+
+   subroutine boundary_dev(nr, nrw, brow, np, bptr, ni, bidx, nw, bw, ng, g, nf, f)
+   !< The boundary terms, one row per thread, its faces in face order: f(r) = f(r) - bw(i) g(i).
+   integer(I4P), intent(in)    :: nr, nrw, np, ni, nw, ng, nf !< Rows, sizes.
+   integer(I4P), intent(in)    :: brow(nrw)  !< The rows (present).
+   integer(I4P), intent(in)    :: bptr(np)   !< Pointers (present).
+   integer(I4P), intent(in)    :: bidx(ni)   !< Faces (present).
+   real(R_P),    intent(in)    :: bw(nw)     !< Face weights in B (present).
+   real(R_P),    intent(in)    :: g(ng)      !< Boundary values (present).
+   real(R_P),    intent(inout) :: f(nf)      !< Right-hand side (present).
+   integer(I4P)                :: q, p, r, i !< Counters.
+
+   !$acc parallel loop present(brow, bptr, bidx, bw, g, f)
+   do q=1, nr
+      r = brow(q)
+      !$acc loop seq
+      do p=bptr(q), bptr(q+1)-1
+         i = bidx(p)
+         f(r) = f(r) - bw(i) * g(i)
+      enddo
+   enddo
+   endsubroutine boundary_dev
+
+   subroutine ghost_values_dev(nrow, ngb, g_bnd, nk, kind, ns, gs, ng, g, nv, gv, has_ghost, dg_kind)
+   !< Each ghost-fill row on a domain face: the ghost of its kind (the host's rule): ghost-Dirichlet, the value (0
+   !< without values); another kind with values, gv + gs g.
+   integer(I4P), intent(in)    :: nrow, ngb, nk, ns, ng, nv !< Rows, sizes.
+   integer(I4P), intent(in)    :: g_bnd(ngb) !< Row -> boundary face, 0 inside (present).
+   integer(I4P), intent(in)    :: kind(nk)   !< Face kinds (present).
+   real(R_P),    intent(in)    :: gs(ns)     !< Value weights in the ghost fill (present).
+   real(R_P),    intent(in)    :: g(ng)      !< Boundary values (present).
+   real(R_P),    intent(inout) :: gv(nv)     !< Ghost values (present).
+   logical,      intent(in)    :: has_ghost  !< Boundary values given.
+   integer(I4P), intent(in)    :: dg_kind    !< ELISHA_BC_DIRICHLET_GHOST.
+   integer(I4P)                :: row, fb    !< Counters.
+
+   !$acc parallel loop present(g_bnd, kind, gs, g, gv)
+   do row=1, nrow
+      fb = g_bnd(row)
+      if (fb > 0) then
+         if (kind(fb) == dg_kind) then
+            gv(row) = 0._R_P
+            if (has_ghost) gv(row) = g(fb)
+         elseif (has_ghost) then
+            gv(row) = gv(row) + gs(fb) * g(fb)
+         endif
+      endif
+   enddo
+   endsubroutine ghost_values_dev
+
+   subroutine scatter_dev(nl, ng, nbp, phi, nb, nu, u, nrow, nd, dst, nv, gv)
+   !< phi on the device: the interior from u (block-major, i fastest), each ghost-fill row's value at its cell, the
+   !< deeper layers copying the first along the normal (the host's copies).
+   integer(I4P), intent(in)    :: nl(3), ng, nbp, nb, nu, nrow, nd, nv !< Cells per block, ghosts, sizes.
+   real(R_P),    intent(inout) :: phi(1-ng:nl(1)+ng,1-ng:nl(2)+ng,1-ng:nl(3)+ng,nbp) !< Potential (present).
+   real(R_P),    intent(in)    :: u(nu)      !< Solution (present).
+   integer(I4P), intent(in)    :: dst(4,nd)  !< Ghost-fill destinations (present).
+   real(R_P),    intent(in)    :: gv(nv)     !< Ghost values (present).
+   integer(I4P)                :: b, i, j, k, row, l !< Counters.
+
+   !$acc parallel loop collapse(4) present(phi, u)
+   do b=1, nb
+      do k=1, nl(3)
+         do j=1, nl(2)
+            do i=1, nl(1)
+               phi(i,j,k,b) = u((b - 1) * nl(1) * nl(2) * nl(3) + i + (j - 1) * nl(1) + (k - 1) * nl(1) * nl(2))
+            enddo
+         enddo
+      enddo
+   enddo
+   !$acc parallel loop present(phi, dst, gv)
+   do row=1, nrow
+      b = dst(4,row) ; i = dst(1,row) ; j = dst(2,row) ; k = dst(3,row)
+      phi(i,j,k,b) = gv(row)
+      !$acc loop seq
+      do l=2, ng
+         if (i < 1)     phi(1-l,j,k,b) = gv(row)
+         if (i > nl(1)) phi(nl(1)+l,j,k,b) = gv(row)
+         if (j < 1)     phi(i,1-l,k,b) = gv(row)
+         if (j > nl(2)) phi(i,nl(2)+l,k,b) = gv(row)
+         if (k < 1)     phi(i,j,1-l,b) = gv(row)
+         if (k > nl(3)) phi(i,j,nl(3)+l,b) = gv(row)
+      enddo
+   enddo
+   endsubroutine scatter_dev
+
+   subroutine scatter_host(nl, ng, nbp, phi, nb, nu, u, nrow, nd, dst, nv, gv)
+   !< scatter_dev's copies on the host (host arrays): the same values, no arithmetic.
+   integer(I4P), intent(in)    :: nl(3), ng, nbp, nb, nu, nrow, nd, nv !< Cells per block, ghosts, sizes.
+   real(R_P),    intent(inout) :: phi(1-ng:nl(1)+ng,1-ng:nl(2)+ng,1-ng:nl(3)+ng,nbp) !< Potential (host).
+   real(R_P),    intent(in)    :: u(nu)      !< Solution (host copy).
+   integer(I4P), intent(in)    :: dst(4,nd)  !< Ghost-fill destinations.
+   real(R_P),    intent(in)    :: gv(nv)     !< Ghost values (host copy).
+   integer(I4P)                :: b, i, j, k, row, l, c !< Counters.
+
+   c = 0
+   do b=1, nb
+      do k=1, nl(3)
+         do j=1, nl(2)
+            do i=1, nl(1)
+               c = c + 1
+               phi(i,j,k,b) = u(c)
+            enddo
+         enddo
+      enddo
+   enddo
+   do row=1, nrow
+      b = dst(4,row) ; i = dst(1,row) ; j = dst(2,row) ; k = dst(3,row)
+      phi(i,j,k,b) = gv(row)
+      do l=2, ng
+         if (i < 1)     phi(1-l,j,k,b) = gv(row)
+         if (i > nl(1)) phi(nl(1)+l,j,k,b) = gv(row)
+         if (j < 1)     phi(i,1-l,k,b) = gv(row)
+         if (j > nl(2)) phi(i,nl(2)+l,k,b) = gv(row)
+         if (k < 1)     phi(i,j,1-l,b) = gv(row)
+         if (k > nl(3)) phi(i,j,nl(3)+l,b) = gv(row)
+      enddo
+   enddo
+   endsubroutine scatter_host
+
+   function energy_dev(n, nv, vol, nb, b, nu, u) result(e)
+   !< sum_{i<=n} vol_i b_i u_i on the device (the host's product order).
+   integer(I4P), intent(in) :: n, nv, nb, nu !< Count, sizes.
+   real(R_P),    intent(in) :: vol(nv)       !< Cell volumes (present).
+   real(R_P),    intent(in) :: b(nb)         !< Source (present).
+   real(R_P),    intent(in) :: u(nu)         !< Solution (present).
+   real(R_P)                :: e             !< Result.
+   integer(I4P)             :: i             !< Counter.
+
+   e = 0._R_P
+   !$acc parallel loop present(vol, b, u) reduction(+:e)
+   do i=1, n
+      e = e + vol(i) * b(i) * u(i)
+   enddo
+   endfunction energy_dev
 endmodule elisha_hierarchical_solver_oac

@@ -22,7 +22,10 @@ program elisha_test_device_api_mpi
 !< And the symmetric V-cycle (the default, ELISHA notes E1c) on the device against the host solver, AMR periodic and
 !< D/N with boundary values: within `TOL_SYM_HOST`, the iterations within one, the device V-cycle's symmetry defect at
 !< most `TOL_VSYM`; and an FCG stopped at max_iterations = 1: `ELISHA_ERR_NOT_CONVERGED` with host arrays and with
-!< `on_device`, the last iterates bitwise equal. Rank 0 prints one
+!< `on_device`, the last iterates bitwise equal. And the device assembly (ELISHA notes "device assembly", the
+!< backend's default): against the host assembly (ADAM's) within `TOL_ASM`, the iterations within one, and on_device
+!< against host arrays bitwise; AMR periodic (the singular mean), D/N with boundary values, isolated (the James step).
+!< The ADAM FNL comparisons above set `assembly=ELISHA_ASSEMBLY_HOST`. Rank 0 prints one
 !< line per case and `elisha_test_device_api_mpi: ok` or `FAILED`. Built only in `tests-nvf-oac`; each rank takes the
 !< GPU of its node-local rank; GPU-aware MPI above one rank.
 use mpi
@@ -31,6 +34,7 @@ use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, iee
 use openacc
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
                    ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_ADAM, ELISHA_ERR_NOT_CONVERGED, &
+                   ELISHA_ASSEMBLY_HOST, ELISHA_ASSEMBLY_DEVICE, &
                    elisha_comm_object, elisha_mesh_object, elisha_solver_object, elisha_diagnostics_object,     &
                    elisha_hierarchical_solver_object
 use adam_grid_object, only : grid_object
@@ -45,6 +49,7 @@ real(R_P),    parameter  :: TOL=1.e-11_R_P      !< FCG tolerance.
 real(R_P),    parameter  :: TOL_STENCIL=1.e-9_R_P !< Stencil against CSR: potential and energy, relative.
 real(R_P),    parameter  :: TOL_SYM_HOST=1.e-9_R_P !< Symmetric V-cycle, device against host: potential, relative.
 real(R_P),    parameter  :: TOL_VSYM=1.e-12_R_P  !< The device V-cycle's symmetry defect.
+real(R_P),    parameter  :: TOL_ASM=1.e-9_R_P    !< Device against host assembly: potential and energy, relative.
 integer(I4P), parameter  :: MAX_IT=100_I4P      !< FCG iterations allowed.
 integer(I4P), parameter  :: NG=2_I4P            !< Ghost layers.
 integer(I4P), parameter  :: D=ELISHA_BC_DIRICHLET, NM=ELISHA_BC_NEUMANN, G=ELISHA_BC_DIRICHLET_GHOST !< Kinds.
@@ -79,6 +84,9 @@ if (failures == 0) then
    call stencil_case('MG stencil AMR D/N + g', [2,2,2], H16, [0,1,0], F_, bc=kinds(D,NM, NM,D, D,D))
    call sym_case('MG symmetric AMR periodic', [2,2,2], H16, [0,0,0], T_)
    call sym_case('MG symmetric AMR D/N + g', [2,2,2], H16, [0,1,0], F_, bc=kinds(D,NM, NM,D, D,D))
+   call asm_case('MG assembly AMR periodic', [2,2,2], H16, [0,0,0], T_, F_)
+   call asm_case('MG assembly AMR D/N + g', [2,2,2], H16, [0,1,0], F_, F_, bc=kinds(D,NM, NM,D, D,D), with_ghost=T_)
+   call asm_case('MG assembly isolated AMR', [3,3,3], H24, [1,1,1], F_, T_)
 endif
 nfail = failures
 call MPI_ALLREDUCE(MPI_IN_PLACE, nfail, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr)
@@ -204,15 +212,19 @@ contains
    pa = 0._R_P ; pe = 0._R_P ; pd = 0._R_P
    if (present(bc)) then
       call a%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
-      call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, vcycle=ELISHA_VCYCLE_ADAM)
+      call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, vcycle=ELISHA_VCYCLE_ADAM, &
+                   assembly=ELISHA_ASSEMBLY_HOST)
       if (stat == ELISHA_OK) call dv%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, &
-                                           vcycle=ELISHA_VCYCLE_ADAM)
+                                           vcycle=ELISHA_VCYCLE_ADAM, &
+                   assembly=ELISHA_ASSEMBLY_HOST)
    else
       call a%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated)
       call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
-                   vcycle=ELISHA_VCYCLE_ADAM)
+                   vcycle=ELISHA_VCYCLE_ADAM, &
+                   assembly=ELISHA_ASSEMBLY_HOST)
       if (stat == ELISHA_OK) call dv%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, &
-                                           isolated=isolated, vcycle=ELISHA_VCYCLE_ADAM)
+                                           isolated=isolated, vcycle=ELISHA_VCYCLE_ADAM, &
+                   assembly=ELISHA_ASSEMBLY_HOST)
    endif
    if (stat /= ELISHA_OK) then
       call fail(label//': setup: '//msg) ; return
@@ -338,6 +350,90 @@ contains
    call report(label//': on_device vs host arrays', nbad)
    call e%destroy ; call dv%destroy ; call mesh%destroy
    endsubroutine facade_case
+
+   subroutine asm_case(label, nblk0, dx0, refine, periodic, isolated, bc, with_ghost)
+   !< The device assembly (ELISHA notes "device assembly", the backend's default): H, the host assembly (ADAM's), host
+   !< arrays; E, the device assembly, host arrays; D, the device assembly, `on_device`. E against H within `TOL_ASM`
+   !< (potential and energy, relative; a device sum's order), the iterations within one; D against E bitwise (phi with
+   !< every ghost layer, the energy, the iterations, the residual).
+   character(*), intent(in)           :: label      !< Case label.
+   integer,      intent(in)           :: nblk0(3)   !< Blocks per axis at level 0.
+   real(R_P),    intent(in)           :: dx0(3)     !< Cell spacing at level 0.
+   integer,      intent(in)           :: refine(3)  !< The refined block.
+   logical,      intent(in)           :: periodic   !< Every axis periodic.
+   logical,      intent(in)           :: isolated   !< Isolated boundaries.
+   integer(I4P), intent(in), optional :: bc(2,3)    !< Kinds.
+   logical,      intent(in), optional :: with_ghost !< Boundary values.
+   type(grid_object)                           :: grid      !< ADAM's grid (unused).
+   type(field_object)                          :: field     !< ADAM's field (unused).
+   type(elisha_mesh_object)                    :: mesh      !< ELISHA's mesh.
+   type(elisha_hierarchical_solver_oac_object) :: h, e, dv  !< Host assembly; device assembly, host and device arrays.
+   real(R_P), allocatable :: buf(:), ph(:,:,:,:), pe(:,:,:,:), pd(:,:,:,:), gv(:) !< Source, potentials, values.
+   real(R_P)              :: eh, ee, ed, r(2) !< Energies, the relative differences.
+   integer(I4P)           :: nb, i, nbad(1)   !< Blocks, counter, differing bits.
+   integer                :: ierr_            !< MPI error status.
+   logical                :: ghost_, ok       !< Boundary values given, pass flag.
+
+   ncase = ncase + 1
+   ghost_ = .false. ; if (present(with_ghost)) ghost_ = with_ghost
+   call make_mesh(nblk0, dx0, .true., refine, periodic, grid, field, mesh, buf, nb)
+   allocate(ph(1-NG:N3(1)+NG,1-NG:N3(2)+NG,1-NG:N3(3)+NG,1:max(nb,1)))
+   allocate(pe, mold=ph) ; allocate(pd, mold=ph)
+   ph = 0._R_P ; pe = 0._R_P ; pd = 0._R_P
+   if (present(bc)) then
+      call h%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, assembly=ELISHA_ASSEMBLY_HOST)
+      if (stat == ELISHA_OK) call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, &
+                                          assembly=ELISHA_ASSEMBLY_DEVICE)
+      if (stat == ELISHA_OK) call dv%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
+   else
+      call h%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
+                   assembly=ELISHA_ASSEMBLY_HOST)
+      if (stat == ELISHA_OK) call e%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, &
+                                          isolated=isolated, assembly=ELISHA_ASSEMBLY_DEVICE)
+      if (stat == ELISHA_OK) call dv%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated)
+   endif
+   if (stat /= ELISHA_OK) then
+      call fail(label//': setup: '//msg) ; return
+   endif
+   allocate(gv(max(e%nbnd,1)))
+   gv = 0._R_P
+   do i=1, e%nbnd
+      gv(i) = 0.3_R_P + sin(3._R_P * e%bnd_x(1,i) + 0.4_R_P) * cos(2._R_P * e%bnd_x(2,i)) + 0.2_R_P * e%bnd_x(3,i)
+   enddo
+   if (ghost_) then
+      call h%solve_packed(mesh, buf, FACTOR, ph, stat, msg, energy=eh, ghost=gv)
+      if (stat == ELISHA_OK) call e%solve_packed(mesh, buf, FACTOR, pe, stat, msg, energy=ee, ghost=gv)
+   else
+      call h%solve_packed(mesh, buf, FACTOR, ph, stat, msg, energy=eh)
+      if (stat == ELISHA_OK) call e%solve_packed(mesh, buf, FACTOR, pe, stat, msg, energy=ee)
+   endif
+   if (stat /= ELISHA_OK) then
+      call fail(label//': solve H/E: '//msg) ; return
+   endif
+   !$acc enter data copyin(buf, pd)
+   if (ghost_) then
+      call dv%solve_packed(mesh, buf, FACTOR, pd, stat, msg, energy=ed, ghost=gv, on_device=.true.)
+   else
+      call dv%solve_packed(mesh, buf, FACTOR, pd, stat, msg, energy=ed, on_device=.true.)
+   endif
+   !$acc update self(pd)
+   !$acc exit data delete(buf, pd)
+   if (stat /= ELISHA_OK) then
+      call fail(label//': solve D: '//msg) ; return
+   endif
+   r(1) = maxval(abs(flat(pe) - flat(ph))) / max(maxval(abs(flat(ph))), tiny(1._R_P))
+   r(2) = abs(ee - eh) / max(abs(eh), tiny(1._R_P))
+   call MPI_ALLREDUCE(MPI_IN_PLACE, r, 2, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr_)
+   nbad = differ(flat(pd), flat(pe)) + differ([ed, dv%residual], [ee, e%residual])
+   if (dv%iterations /= e%iterations .or. dv%iterations0 /= e%iterations0) nbad = nbad + 1
+   call MPI_ALLREDUCE(MPI_IN_PLACE, nbad, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr_)
+   ok = r(1) <= TOL_ASM .and. r(2) <= TOL_ASM .and. abs(e%iterations - h%iterations) <= 1 .and. nbad(1) == 0
+   if (c%rank == 0) print '(A,A,A,I0,A,I0,A,ES9.2,A,ES9.2,A,I0,A)', 'elisha_test_device_api_mpi: ', label, &
+      ': iterations device/host assembly ', e%iterations, '/', h%iterations, ', rel diff phi ', r(1), ', energy ', &
+      r(2), ', on_device vs host arrays differing ', nbad(1), merge('  ok  ', '  FAIL', ok)
+   if (.not.ok) call fail(label//': the device assembly')
+   call h%destroy ; call e%destroy ; call dv%destroy ; call mesh%destroy
+   endsubroutine asm_case
 
    subroutine sym_case(label, nblk0, dx0, refine, periodic, bc)
    !< The symmetric V-cycle on the device (ELISHA notes E1c, the default): the device solver (host arrays) against the

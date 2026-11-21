@@ -1142,6 +1142,11 @@ contains
    if (.not.dev) then
       call self%solve_packed_host(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, &
                                   energy=energy, ghost=ghost)
+   elseif (self%assembly == ELISHA_ASSEMBLY_DEVICE) then ! a device backend assembling on the device: no staging
+      self%buf_device = .true.
+      call self%solve_packed_host(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, &
+                                  energy=energy, ghost=ghost)
+      self%buf_device = .false.
    else
       call self%stage_source(buf, bufh, code)
       if (code /= ELISHA_OK) then

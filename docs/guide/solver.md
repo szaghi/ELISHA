@@ -10,7 +10,7 @@ the path is an argument, a backend is a mold, and what clients read from the sol
 
 | Procedure | Role |
 |-----------|------|
-| `setup(mesh, comm, stat, errmsg[, path][, isolated][, bc][, dg_order][, tolerance][, max_iterations][, root_cells][, spectral_mold][, hierarchical_mold][, level_operator][, vcycle])` | Choose the path for the mesh and set up its solver; called on the initial mesh and after every regrid |
+| `setup(mesh, comm, stat, errmsg[, path][, isolated][, bc][, dg_order][, tolerance][, max_iterations][, root_cells][, spectral_mold][, hierarchical_mold][, level_operator][, vcycle][, assembly])` | Choose the path for the mesh and set up its solver; called on the initial mesh and after every regrid |
 | `solve_packed(mesh, buf, factor, phi, stat, errmsg[, energy][, ghost][, on_device])` | Solve for `phi` from the packed interior source; every ghost layer of `phi` is filled |
 | `diagnostics()` | An `elisha_diagnostics_object`: the path, iterations, residual, tolerance, CG flag, wall times |
 | `path()`, `is_hierarchical()` | The path in use (`ELISHA_PATH_SPECTRAL`, `ELISHA_PATH_HIERARCHICAL`; 0 before setup) |
@@ -39,6 +39,7 @@ caller already did, so it knows the leaf levels over every rank, then chooses th
 | `root_cells` | The root of the V-cycle at most this many cells (default: the root solver's) | hierarchical |
 | `level_operator` | `ELISHA_OPERATOR_CSR` (the host's default) or `ELISHA_OPERATOR_STENCIL` (the OpenACC backend's default): the V-cycle's level operators from their CSR entries, or their block-interior rows as a matrix-free stencil ([the hierarchical solver](./hierarchical-solver#stencil-level-operators)); `ELISHA_ERR_ARGUMENT` otherwise | hierarchical |
 | `vcycle` | `ELISHA_VCYCLE_SYMMETRIC` (default) or `ELISHA_VCYCLE_ADAM` (ADAM's V-cycle, not symmetric on AMR, for the bitwise parity with ADAM): [the symmetric V-cycle](./hierarchical-solver#the-symmetric-v-cycle); `ELISHA_ERR_ARGUMENT` otherwise | hierarchical |
+| `assembly` | `ELISHA_ASSEMBLY_HOST` (the host solver's only one) or `ELISHA_ASSEMBLY_DEVICE` (the OpenACC backend's default): where the hierarchical solver assembles a solve's right-hand side, ghost values and energy ([the device backends](./device#the-root-on-the-device-and-device-resident-arrays-m7-audit-c4)); `ELISHA_ERR_ARGUMENT` otherwise | hierarchical |
 | `spectral_mold` | The spectral solver's type, and on the hierarchical path the type of its root (default: the host FFTW solver) | both |
 | `hierarchical_mold` | The hierarchical solver's type (default: the host one) | hierarchical |
 

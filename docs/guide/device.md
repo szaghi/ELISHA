@@ -52,20 +52,26 @@ call solver%solve_packed(mesh, buf, factor, phi, stat, errmsg, on_device=.true.)
 ! phi is current on the device (and on the host)
 ```
 
-The right-hand side (its sums) and the ghost fill stay on the host, in the host's order, which keeps the results
-bitwise. The backend therefore copies the source to a host copy of its own (the client's `buf` is not touched) and
-brings `phi`, every ghost layer included, to the host and back around the solve. The option saves the client its
-host mirror and its own copies. It does not save the per-solve transfers; it adds them. A host solver given
-`on_device=.true.` returns `ELISHA_ERR_ARGUMENT`.
+**The device assembly** (`setup(..., assembly=)`, ELISHA notes "device assembly"). The OpenACC multigrid's default
+is `ELISHA_ASSEMBLY_DEVICE`: every operation of a solve that does arithmetic outside the FCG runs on the device.
+That is the right-hand side `factor V buf - B g` (the boundary terms row by row, in the host's face order), the mean
+removed when no face is Dirichlet, the stop's maxima, the ghost values of each face's kind, and the energy.
+- **With `on_device`,** nothing is staged: the source is read and `phi` written on the device. Only the boundary
+  values (one per boundary face) go up, and scalars come down.
+- **With host arrays,** the source goes up, and `u` and the final ghost values come down. The host copies them into
+  `phi` without arithmetic, so the two modes are bitwise equal.
+- **Against the host assembly** the results differ by round-off. Two sums run in the device's order, the singular
+  mean and the energy, and the device may contract the boundary terms into FMAs.
 
-**`on_device` is slower than host arrays today.** The scaling ladder (job 1369163, A30) measured it at level 4 with 3
-ghost layers. The multigrid with 3 932 160 cells is 9 to 24% slower at np 1 and 2: 0.320 s against 0.258 s periodic
-and 0.707 s against 0.649 s isolated at np 1. The FFT with 2 097 152 cells is 18 to 51% slower: 0.084 s against
-0.056 s periodic at np 1. The extra time is the staging. For the multigrid at np 1 that is about 370 MB per solve,
-the source plus `phi` both ways, which matches the 0.062 s difference at about 6 GB/s. The cost per rank shrinks as
-the ranks grow (+13% for the multigrid periodic at np 4). Pass host arrays unless the data already lives on the
-device and a host mirror is not wanted. The option pays off only once the right-hand side and the ghost fill run on
-the device. [Performance, Scaling (EB)](./performance#device-a30-job-1369163) has every row.
+`assembly=ELISHA_ASSEMBLY_HOST` keeps ADAM FNL's assembly on the host, bitwise ADAM FNL's (the device parity tests use
+it). Then `on_device` stages: the source to a host copy, `phi` to the host and back. The host solver has only the host
+assembly; `ELISHA_ASSEMBLY_DEVICE` on it returns `ELISHA_ERR_ARGUMENT`, and so does `on_device=.true.`.
+
+**With the host assembly, `on_device` was slower than host arrays.** The scaling ladder (job 1369163, A30, before the
+device assembly) measured it at level 4 with 3 ghost layers. The multigrid with 3 932 160 cells was 9 to 24% slower at
+np 1 and 2: 0.320 s against 0.258 s periodic and 0.707 s against 0.649 s isolated at np 1. The extra time was the
+staging: about 370 MB per solve at np 1, the source plus `phi` both ways, 0.062 s at about 6 GB/s.
+[Performance, Scaling (EB)](./performance#device-a30-job-1369163) has every row.
 
 `src/tests/device/elisha_test_device_api_mpi` solves each case three ways: ADAM FNL, ELISHA with host arrays, and
 ELISHA with `on_device`. The cases are hierarchical (periodic, ghost-Dirichlet and D/N roots, isolated), spectral, and

@@ -53,7 +53,8 @@ use openacc
 #endif
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN,        &
                    ELISHA_BC_DIRICHLET_GHOST, elisha_comm_object, elisha_mesh_object,                      &
-                   elisha_spectral_solver_object, elisha_hierarchical_solver_object, ELISHA_VCYCLE_ADAM
+                   elisha_spectral_solver_object, elisha_hierarchical_solver_object, ELISHA_VCYCLE_ADAM, &
+                   ELISHA_ASSEMBLY_HOST
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
 use adam_mpih_global, only : mpih
@@ -405,30 +406,38 @@ contains
       if (root_cells > 0) then
          call adam%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, bc=bc, root_cells=root_cells)
          call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, root_cells=root_cells, &
-                        vcycle=ELISHA_VCYCLE_ADAM)
+                        vcycle=ELISHA_VCYCLE_ADAM, &
+                        assembly=ELISHA_ASSEMBLY_HOST)
          if (stat == ELISHA_OK) &
             call hst%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, root_cells=root_cells, &
-                           vcycle=ELISHA_VCYCLE_ADAM)
+                           vcycle=ELISHA_VCYCLE_ADAM, &
+                        assembly=ELISHA_ASSEMBLY_HOST)
       else
          call adam%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
-         call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, vcycle=ELISHA_VCYCLE_ADAM)
+         call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, vcycle=ELISHA_VCYCLE_ADAM, &
+                        assembly=ELISHA_ASSEMBLY_HOST)
          if (stat == ELISHA_OK) call hst%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, &
-                                               vcycle=ELISHA_VCYCLE_ADAM)
+                                               vcycle=ELISHA_VCYCLE_ADAM, &
+                        assembly=ELISHA_ASSEMBLY_HOST)
       endif
    else
       if (root_cells > 0) then
          call adam%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
                               root_cells=root_cells)
          call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
-                        root_cells=root_cells, vcycle=ELISHA_VCYCLE_ADAM)
+                        root_cells=root_cells, vcycle=ELISHA_VCYCLE_ADAM, &
+                        assembly=ELISHA_ASSEMBLY_HOST)
          if (stat == ELISHA_OK) call hst%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, &
-                                               isolated=isolated, root_cells=root_cells, vcycle=ELISHA_VCYCLE_ADAM)
+                                               isolated=isolated, root_cells=root_cells, vcycle=ELISHA_VCYCLE_ADAM, &
+                        assembly=ELISHA_ASSEMBLY_HOST)
       else
          call adam%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated)
          call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
-                        vcycle=ELISHA_VCYCLE_ADAM)
+                        vcycle=ELISHA_VCYCLE_ADAM, &
+                        assembly=ELISHA_ASSEMBLY_HOST)
          if (stat == ELISHA_OK) call hst%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, &
-                                               isolated=isolated, vcycle=ELISHA_VCYCLE_ADAM)
+                                               isolated=isolated, vcycle=ELISHA_VCYCLE_ADAM, &
+                        assembly=ELISHA_ASSEMBLY_HOST)
       endif
    endif
    if (stat /= ELISHA_OK) then
