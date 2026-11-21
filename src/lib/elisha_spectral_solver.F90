@@ -676,7 +676,9 @@ contains
    !< present on the device (OpenACC), a device backend's arrays: the source is staged to a host copy
    !< (`stage_source`), `phi` to the host and back (`stage_potential`; contiguous), around the host solve, so the result
    !< is bitwise the one from host arrays. This host solver has no device arrays: `on_device=.true.` returns
-   !< `ELISHA_ERR_ARGUMENT` (an argument every rank passes alike, refused before any collective). The CG of the wide
+   !< `ELISHA_ERR_ARGUMENT` (an argument every rank passes alike, refused before any collective). `on_device` moves the
+   !< source down and phi's blocks 1..nb up: the solve writes every element of them, so phi is not staged down first
+   !< (blocks beyond nb keep their device values). The CG of the wide
    !< D(G) (zero- or free-ghost faces) that reaches `max_iterations` above its tolerance returns
    !< `ELISHA_ERR_NOT_CONVERGED` on every rank (`converged` false), `phi` the last iterate with its ghosts filled; ADAM
    !< printed a warning on rank 0 and returned as if converged.
@@ -704,10 +706,12 @@ contains
                                'device backend (the host solver has no device arrays)')
          return
       endif
-      call self%stage_potential(phi, to_host=.true.)
+      ! no phi to the host first: the solve writes every element of phi's blocks 1..nb (interior and every ghost layer,
+      ! from the global solution), and only those go back (ELISHA notes "device assembly": one transfer of phi saved)
       call self%solve_packed_host(mesh=mesh, buf=bufh, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy)
       ! not converged (ELISHA notes E1c, decision C): phi is the last iterate, staged back as a converged one
-      if (stat == ELISHA_OK .or. stat == ELISHA_ERR_NOT_CONVERGED) call self%stage_potential(phi, to_host=.false.)
+      if ((stat == ELISHA_OK .or. stat == ELISHA_ERR_NOT_CONVERGED) .and. mesh%nb > 0) &
+         call self%stage_potential(phi(:,:,:,1:mesh%nb), to_host=.false.)
    endif
    endsubroutine solve_packed
 
