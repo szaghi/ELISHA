@@ -369,6 +369,7 @@ contains
    integer(I4P)              :: b, i, j, k, d !< Counters.
    integer(I4P)              :: o(3)          !< Unit offset along a direction.
    integer(I4P)              :: iv(2)         !< Unfilled count, rank_diff, reduced.
+   integer(I4P)              :: ijk3(3)       !< A cell (a named actual argument).
    integer(I8P)              :: nu(1)         !< Unfilled count, summed.
    type(elisha_comm_object)  :: solo          !< Rank 0 alone.
    character(:), allocatable :: msg           !< Message.
@@ -397,7 +398,8 @@ contains
                   unfilled = unfilled + 1_I4P
                   cycle
                endif
-               xyz = cell_centre(my_c(:,b), [i, j, k], nk, is_iso)
+               ijk3 = [i, j, k] ! named: ifx -check arg_temp_created flags a constructor per call
+               xyz = cell_centre(my_c(:,b), ijk3, nk, is_iso)
                if (is_iso) then ! no discrete closed form; the continuum error over every cell, ghosts included
                   e(3) = max(e(3), abs(phi(i,j,k,b) - phi_sphere(xyz, prof)))
                   scale(1) = 1._R_P
@@ -501,6 +503,9 @@ contains
    logical                   :: is_iso, cube     !< Isolated solve, the cube domain.
    logical                   :: null(3)          !< Null axes.
    integer(I4P)              :: nijk(3), nb, b, i, j, k, p !< Cells per block, blocks, counters.
+   integer(I4P)              :: ijk3(3), nblk1(3) !< A cell, the blocks at level 0 (named actual arguments).
+   real(R_P)                 :: dx0(3), xyz(3)   !< Spacing at level 0, a cell centre.
+   logical                   :: per3(3), act3(3) !< Periodic axes, active axes.
 
    call new_fft(solver)
    is_iso = prof /= PROFILE_PERIODIC
@@ -509,8 +514,10 @@ contains
    null = [.false., .false., nk == 1]
    call domain(cube, lb, emin)
    nb = size(coords, dim=2)
-   call mesh%init(nijk, NGC, [1_I4P, 1_I4P, 1_I4P], lb / real(nijk, R_P), emin, &
-                  merge(.not.null, [.false., .false., .false.], periodic), null, coords, stat, msg)
+   ! named arguments, no expressions: ifx -check arg_temp_created flags every temporary
+   nblk1 = 1_I4P ; dx0 = lb / real(nijk, R_P) ; per3 = merge(.not.null, [.false., .false., .false.], periodic)
+   act3 = [.true., .true., nk > 1]
+   call mesh%init(nijk, NGC, nblk1, dx0, emin, per3, null, coords, stat, msg)
    if (stat /= ELISHA_OK) return
    call solver%setup(mesh, cc, stat, msg, isolated=is_iso)
    if (stat /= ELISHA_OK) return
@@ -525,10 +532,12 @@ contains
       do k=1, nijk(3)
          do j=1, nijk(2)
             do i=1, nijk(1)
+               ijk3 = [i, j, k]
+               xyz = cell_centre(coords(:,b), ijk3, nk, cube)
                if (is_iso) then
-                  f(i,j,k,b) = rho_sphere(cell_centre(coords(:,b), [i, j, k], nk, cube), prof, dxc)
+                  f(i,j,k,b) = rho_sphere(xyz, prof, dxc)
                else
-                  f(i,j,k,b) = rho(cell_centre(coords(:,b), [i, j, k], nk, cube), [.true., .true., nk > 1])
+                  f(i,j,k,b) = rho(xyz, act3)
                endif
                p = p + 1 ; buf(p) = f(i,j,k,b)
             enddo
@@ -559,6 +568,9 @@ contains
    real(R_P)                 :: lb(3), emin(3)   !< Domain lengths, lower corner.
    logical                   :: null(3)          !< Null axes.
    integer(I4P)              :: nijk(3), st(1), lo(1), hi(1) !< Cells per block, status and its range over the ranks.
+   integer(I4P)              :: nblk1(3)         !< The blocks at level 0 (a named actual argument).
+   real(R_P)                 :: dx0(3)           !< Spacing at level 0.
+   logical                   :: per3(3)          !< Periodic axes.
    logical                   :: ok               !< Pass flag.
    character(:), allocatable :: msg              !< Message.
 
@@ -567,8 +579,8 @@ contains
    null = [.false., .false., nk == 1]
    call domain(cube, lb, emin)
    call level_blocks(nk, level, c%rank, c%nranks, all_c, my_c)
-   call mesh%init(nijk, NGC, [1_I4P, 1_I4P, 1_I4P], lb / real(nijk, R_P), emin, &
-                  merge(.not.null, [.false., .false., .false.], periodic), null, my_c, st(1), msg)
+   nblk1 = 1_I4P ; dx0 = lb / real(nijk, R_P) ; per3 = merge(.not.null, [.false., .false., .false.], periodic)
+   call mesh%init(nijk, NGC, nblk1, dx0, emin, per3, null, my_c, st(1), msg)
    if (st(1) == ELISHA_OK) call solver%setup(mesh, c, st(1), msg, isolated=isolated)
    lo = st ; hi = st
    call c%min_i4(lo, stat) ; call c%max_i4(hi, stat)

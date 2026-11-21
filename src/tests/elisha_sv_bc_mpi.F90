@@ -85,6 +85,16 @@ integer(I4P), parameter :: G=ELISHA_BC_DIRICHLET_GHOST   !< Shorthand.
 integer(I4P), parameter :: Z=ELISHA_BC_ZERO_GHOSTS       !< Shorthand.
 integer(I4P), parameter :: F=ELISHA_BC_FREE_GHOSTS       !< Shorthand.
 integer(I4P), parameter :: MAX_ROWS=64_I4P               !< Rows of the summary table.
+! named actual arguments: ifx's -check arg_temp_created reports every array expression passed to an explicit-shape
+! dummy (a warning and a traceback per call), so constructors and expressions go through these
+logical,      parameter :: NO_NULL(3)=[.false., .false., .false.] !< No null axis.
+integer(I4P), parameter :: B111(3)=[1_I4P, 1_I4P, 1_I4P]           !< One block.
+integer(I4P), parameter :: B222(3)=[2_I4P, 2_I4P, 2_I4P]           !< 2^3 blocks.
+integer(I4P), parameter :: C444(3)=[4_I4P, 4_I4P, 4_I4P]           !< 4^3 cells.
+integer(I4P), parameter :: C888(3)=[8_I4P, 8_I4P, 8_I4P]           !< 8^3 cells.
+real(R_P),    parameter :: DX01(3)=[0.1_R_P, 0.1_R_P, 0.1_R_P]     !< A cubic spacing.
+real(R_P),    parameter :: DXL16(3)=L / 16._R_P                    !< SV-2's box over 16 cells.
+real(R_P),    parameter :: DXL8(3)=L / 8._R_P                      !< SV-2's box over 8 cells.
 type(elisha_comm_object)  :: c             !< Communication context (the world).
 real(R_P)                 :: a_d1(4,4)     !< Centred D1 coefficients a_j of order p, column p/2 (GIDEON's rows).
 logical                   :: test_passed   !< Aggregate pass flag.
@@ -101,6 +111,8 @@ logical                   :: cfg_null(3)   !< Current case: null directions.
 logical                   :: cfg_dirichlet !< Current case: some axis has a Dirichlet face.
 integer(I4P)              :: a, po, m, stat !< Counters, status.
 real(R_P)                 :: lmax(2)       !< A leg's maxima of its two measures.
+integer(I4P)              :: bcx(2,3)      !< Kinds per face, a named actual argument.
+integer(I4P)              :: n3a(3), n3b(3) !< Blocks and cells per axis, named actual arguments.
 integer(I4P)              :: lit(2)        !< A leg's CG iteration range.
 logical                   :: lok           !< A leg's verdict.
 integer                   :: ierr, world   !< MPI error status, the world communicator.
@@ -178,14 +190,22 @@ else
       if (po == 2 .and. c%rank == 0) print '(A)', '   the wide operator D(G) (E2a):'
       cfg_order = po
       call leg_start
-      call check('P/P D/D N/N', reshape([P,P, D,D, N,N], [2,3]), null_z=.false.)
-      call check('D/N N/D P/P', reshape([D,N, N,D, P,P], [2,3]), null_z=.false.)
-      call check('N/N N/N N/N', reshape([N,N, N,N, N,N], [2,3]), null_z=.false.)
-      call check('D/D D/D D/D', reshape([D,D, D,D, D,D], [2,3]), null_z=.false.)
-      call check('N/D D/N N/N', reshape([N,D, D,N, N,N], [2,3]), null_z=.false.)
-      call check('G/G G/G G/G', reshape([G,G, G,G, G,G], [2,3]), null_z=.false.)
-      call check('2-D D/N N/N ', reshape([D,N, N,N, P,P], [2,3]), null_z=.true.)
-      call check('2-D P/P D/D ', reshape([P,P, D,D, P,P], [2,3]), null_z=.true.)
+      bcx = reshape([P,P, D,D, N,N], [2,3])
+      call check('P/P D/D N/N', bcx, null_z=.false.)
+      bcx = reshape([D,N, N,D, P,P], [2,3])
+      call check('D/N N/D P/P', bcx, null_z=.false.)
+      bcx = reshape([N,N, N,N, N,N], [2,3])
+      call check('N/N N/N N/N', bcx, null_z=.false.)
+      bcx = reshape([D,D, D,D, D,D], [2,3])
+      call check('D/D D/D D/D', bcx, null_z=.false.)
+      bcx = reshape([N,D, D,N, N,N], [2,3])
+      call check('N/D D/N N/N', bcx, null_z=.false.)
+      bcx = reshape([G,G, G,G, G,G], [2,3])
+      call check('G/G G/G G/G', bcx, null_z=.false.)
+      bcx = reshape([D,N, N,N, P,P], [2,3])
+      call check('2-D D/N N/N ', bcx, null_z=.true.)
+      bcx = reshape([P,P, D,D, P,P], [2,3])
+      call check('2-D P/P D/D ', bcx, null_z=.true.)
       call leg_row(merge('E1a compact      ', 'E2a D(G) p = '//itoa(po)//'   ', po == 0), '8 configurations, '// &
                    '|phi - phi_h| max '//fmt(lmax(1))//', energy max '//fmt(lmax(2))//' (<= '//fmt(TOL_DISCRETE)//')')
    enddo
@@ -200,10 +220,18 @@ else
       do po=2, 8, 2
          tl = c%wtime()
          call leg_start
-         call check_zero('Z/Z P/P P/P', reshape([Z,Z, P,P, P,P], [2,3]), po, [4,4,4], [4,4,4], .false., m)
-         call check_zero('Z/Z D/D N/N', reshape([Z,Z, D,D, N,N], [2,3]), po, [4,4,4], [4,4,4], .false., m)
-         call check_zero('Z/Z Z/Z Z/Z', reshape([Z,Z, Z,Z, Z,Z], [2,3]), po, [4,4,4], [4,4,4], .false., m)
-         call check_zero('2-D Z/Z N/N', reshape([Z,Z, N,N, P,P], [2,3]), po, [4,4,1], [4,4,1], .true.,  m)
+         bcx = reshape([Z,Z, P,P, P,P], [2,3])
+         n3a = [4,4,4] ; n3b = [4,4,4]
+         call check_zero('Z/Z P/P P/P', bcx, po, n3a, n3b, .false., m)
+         bcx = reshape([Z,Z, D,D, N,N], [2,3])
+         n3a = [4,4,4] ; n3b = [4,4,4]
+         call check_zero('Z/Z D/D N/N', bcx, po, n3a, n3b, .false., m)
+         bcx = reshape([Z,Z, Z,Z, Z,Z], [2,3])
+         n3a = [4,4,4] ; n3b = [4,4,4]
+         call check_zero('Z/Z Z/Z Z/Z', bcx, po, n3a, n3b, .false., m)
+         bcx = reshape([Z,Z, N,N, P,P], [2,3])
+         n3a = [4,4,1] ; n3b = [4,4,1]
+         call check_zero('2-D Z/Z N/N', bcx, po, n3a, n3b, .true.,  m)
          call leg_row('E2b D(G) p = '//itoa(po)//'   ', '4 configurations, |u - u_exact| max '//fmt(lmax(1))//         &
                       ' (<= '//fmt(TOL_PCG)//'), ghosts max '//fmt(lmax(2))//', CG iterations '//itoa(lit(1))//'-'// &
                       itoa(lit(2))//' (<= '//itoa(MAX_PCG_IT)//')')
@@ -213,8 +241,12 @@ else
       logical      :: ok         !< Pass flag.
       tl = c%wtime()
       call leg_start
-      call check_zero('Z/Z D/D N/N', reshape([Z,Z, D,D, N,N], [2,3]), 4_I4P, [4,4,4], [4,4,4], .false., it16)
-      call check_zero('Z/Z D/D N/N', reshape([Z,Z, D,D, N,N], [2,3]), 4_I4P, [4,4,4], [8,8,8], .false., it32)
+      bcx = reshape([Z,Z, D,D, N,N], [2,3])
+      n3a = [4,4,4] ; n3b = [4,4,4]
+      call check_zero('Z/Z D/D N/N', bcx, 4_I4P, n3a, n3b, .false., it16)
+      bcx = reshape([Z,Z, D,D, N,N], [2,3])
+      n3a = [4,4,4] ; n3b = [8,8,8]
+      call check_zero('Z/Z D/D N/N', bcx, 4_I4P, n3a, n3b, .false., it32)
       ok = abs(it32 - it16) <= 1
       if (c%rank == 0) print '(A)', '   p = 4, Z/Z D/D N/N, CG iterations on 16 and 32 cells per axis: '// &
          itoa(it16)//', '//itoa(it32)//merge(' ok  ', ' FAIL', ok)
@@ -234,12 +266,18 @@ else
       do po=1, 4
          tl = c%wtime()
          call leg_start
-         call check_prism_ops('P/P P/P P/P', reshape([P,P, P,P, P,P], [2,3]), po)
-         call check_prism_ops('D/D D/D D/D', reshape([D,D, D,D, D,D], [2,3]), po)
-         call check_prism_ops('N/N D/D D/D', reshape([N,N, D,D, D,D], [2,3]), po)
-         call check_prism_ops('D/N P/P N/D', reshape([D,N, P,P, N,D], [2,3]), po)
-         call check_prism_ops('Z/Z Z/Z Z/Z', reshape([Z,Z, Z,Z, Z,Z], [2,3]), po)
-         call check_prism_ops('Z/Z D/D N/N', reshape([Z,Z, D,D, N,N], [2,3]), po)
+         bcx = reshape([P,P, P,P, P,P], [2,3])
+         call check_prism_ops('P/P P/P P/P', bcx, po)
+         bcx = reshape([D,D, D,D, D,D], [2,3])
+         call check_prism_ops('D/D D/D D/D', bcx, po)
+         bcx = reshape([N,N, D,D, D,D], [2,3])
+         call check_prism_ops('N/N D/D D/D', bcx, po)
+         bcx = reshape([D,N, P,P, N,D], [2,3])
+         call check_prism_ops('D/N P/P N/D', bcx, po)
+         bcx = reshape([Z,Z, Z,Z, Z,Z], [2,3])
+         call check_prism_ops('Z/Z Z/Z Z/Z', bcx, po)
+         bcx = reshape([Z,Z, D,D, N,N], [2,3])
+         call check_prism_ops('Z/Z D/D N/N', bcx, po)
          call leg_row('E3a order '//itoa(2*po)//'      ', '6 configurations, |div(grad phi) - f| / max|f| FD max '// &
                       fmt(lmax(1))//', FV max '//fmt(lmax(2))//' (<= '//fmt(TOL_PRISM)//', zero ghosts '//      &
                       fmt(TOL_PCG)//')')
@@ -251,9 +289,12 @@ else
       do po=2, 6, 2
          tl = c%wtime()
          call leg_start
-         call check_free('F/F F/F F/F', reshape([F,F, F,F, F,F], [2,3]), po)
-         call check_free('F/F D/D P/P', reshape([F,F, D,D, P,P], [2,3]), po)
-         call check_free('F/Z N/N F/F', reshape([F,Z, N,N, F,F], [2,3]), po)
+         bcx = reshape([F,F, F,F, F,F], [2,3])
+         call check_free('F/F F/F F/F', bcx, po)
+         bcx = reshape([F,F, D,D, P,P], [2,3])
+         call check_free('F/F D/D P/P', bcx, po)
+         bcx = reshape([F,Z, N,N, F,F], [2,3])
+         call check_free('F/Z N/N F/F', bcx, po)
          call leg_row('E3c D(G) p = '//itoa(po)//'   ', '3 configurations, ghosts against the direct sum max '//      &
                       fmt(lmax(1))//' (<= '//fmt(TOL_DISCRETE)//'), |D(G) phi - factor f| max '//fmt(lmax(2))//   &
                       ' (<= '//fmt(TOL_FREE)//'), CG iterations '//itoa(lit(1))//'-'//itoa(lit(2))//' (<= '//     &
@@ -358,7 +399,9 @@ contains
    tl = c%wtime()
    cfg_order = order_
    do mm=1, 3
-      call solve_case(reshape([D,D, D,D, D,D], [2,3]), [2,2,2], [4,4,4]*2**mm, .false., e_disc, e_cont(mm), e_energy)
+      bcx = reshape([D,D, D,D, D,D], [2,3])
+      n3b = [4,4,4]*2**mm
+      call solve_case(bcx, B222, n3b, .false., e_disc, e_cont(mm), e_energy)
    enddo
    order = log(e_cont(2) / e_cont(3)) / log(2._R_P)
    ok = order >= min_ord
@@ -606,7 +649,7 @@ contains
       enddo
    enddo
    call solver%initialize_blocks(nblk=NBLK, nijk=NIJK, ngc=gw, dxyz=dxyz, level=0_I4P,                       &
-                                 null_xyz=[.false., .false., .false.], isolated=.false., comm=c, stat=stat, &
+                                 null_xyz=NO_NULL, isolated=.false., comm=c, stat=stat, &
                                  errmsg=msg, bc=bc, dg_order=p_)
    if (failed('initialize_blocks')) return
    out = 0._R_P
@@ -670,7 +713,7 @@ contains
    ! D(G) of the solution: the free slabs as returned, the test's rules on the other faces
    bc_rule = merge(Z, bc, bc == F)
    ua = uo
-   call rule_ghosts(ua, ncell, bc_rule, [.false., .false., .false.], gw)
+   call rule_ghosts(ua, ncell, bc_rule, NO_NULL, gw)
    do ax=1, 3
       do side=1, 2
          if (bc(side,ax) /= F) cycle
@@ -683,7 +726,7 @@ contains
          ua(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3)) = uo(lo(1):hi(1),lo(2):hi(2),lo(3):hi(3))
       enddo
    enddo
-   call d1d1(ua, ncell, dxyz, [.false., .false., .false.], p_, y)
+   call d1d1(ua, ncell, dxyz, NO_NULL, p_, y)
    res = maxval(abs(y - FACTOR * src)) / maxval(abs(FACTOR * src))
    ok = gmax <= TOL_DISCRETE .and. res <= TOL_FREE .and. it(1) <= MAX_PCG_IT
    call leg_add(gmax, res, ok, it(1))
@@ -701,6 +744,7 @@ contains
    integer(I4P), intent(in) :: s_      !< Half stencil (order 2 s_).
    class(elisha_spectral_solver_object), allocatable :: solver !< The solver.
    integer(I4P), parameter   :: NC=16_I4P   !< Cells per axis.
+   integer(I4P), parameter   :: NCV(3)=[NC, NC, NC] !< Cells per axis, all three (a named actual argument).
    character(2), parameter   :: SCHEME(2)=['FD', 'FV'] !< Schemes.
    integer(I4P)              :: p_, sch, nbl, i, j, k, cc !< Order, scheme, counters.
    real(R_P)                 :: dxyz(3), res(2), fmax !< Spacing, residual per scheme, max |f|.
@@ -726,7 +770,7 @@ contains
             enddo
          enddo
       enddo
-      call rule_ghosts(u, [NC, NC, NC], bc, [.false., .false., .false.], p_)
+      call rule_ghosts(u, NCV, bc, NO_NULL, p_)
       call div_grad(u, s_, NC, dxyz, sch, f)
       cc = 0
       do k=1, NC
@@ -737,8 +781,8 @@ contains
             enddo
          enddo
       enddo
-      call solver%initialize_blocks(nblk=[1,1,1], nijk=[NC,NC,NC], ngc=p_, dxyz=dxyz, level=0_I4P,                    &
-                                    null_xyz=[.false., .false., .false.], isolated=.false., comm=c, stat=stat, &
+      call solver%initialize_blocks(nblk=B111, nijk=NCV, ngc=p_, dxyz=dxyz, level=0_I4P,                    &
+                                    null_xyz=NO_NULL, isolated=.false., comm=c, stat=stat, &
                                     errmsg=msg, bc=bc, dg_order=p_)
       if (failed('initialize_blocks')) return
       out = 0._R_P
@@ -776,31 +820,38 @@ contains
    integer(I4P), intent(in)  :: sch_                 !< Scheme.
    real(R_P),    intent(out) :: y(1:,1:,1:)          !< Result [nc^3].
    real(R_P), allocatable    :: gr(:,:,:,:)          !< Gradient, padded by s_.
-   integer(I4P)              :: ii, jj, kk           !< Counters.
+   real(R_P)                 :: sx(-4:4), sy(-4:4), sz(-4:4) !< The stencils along x, y, z, contiguous: GIDEON's
+                                                     !< explicit-shape dummies take no strided section (ifx's
+                                                     !< -check arg_temp_created reports each copy).
+   real(R_P)                 :: g3(3)                !< A gradient.
+   integer(I4P)              :: ii, jj, kk, o        !< Counters.
 
    allocate(gr(3,1-s_:nc+s_,1-s_:nc+s_,1-s_:nc+s_))
    do kk=1-s_, nc+s_
       do jj=1-s_, nc+s_
          do ii=1-s_, nc+s_
+            do o=-s_, s_
+               sx(o) = q(ii+o,jj,kk) ; sy(o) = q(ii,jj+o,kk) ; sz(o) = q(ii,jj,kk+o)
+            enddo
             if (sch_ == 1) then
-               call gideon_fd_gradient_c(2*s_, q(ii-s_:ii+s_,jj,kk), q(ii,jj-s_:jj+s_,kk), q(ii,jj,kk-s_:kk+s_), dxyz, &
-                                         gr(:,ii,jj,kk))
+               call gideon_fd_gradient_c(2*s_, sx(-s_:s_), sy(-s_:s_), sz(-s_:s_), dxyz, g3)
             else
-               call gideon_fv_gradient_c(2*s_, q(ii-s_:ii+s_,jj,kk), q(ii,jj-s_:jj+s_,kk), q(ii,jj,kk-s_:kk+s_), dxyz, &
-                                         gr(:,ii,jj,kk))
+               call gideon_fv_gradient_c(2*s_, sx(-s_:s_), sy(-s_:s_), sz(-s_:s_), dxyz, g3)
             endif
+            gr(:,ii,jj,kk) = g3
          enddo
       enddo
    enddo
    do kk=1, nc
       do jj=1, nc
          do ii=1, nc
+            do o=-s_, s_
+               sx(o) = gr(1,ii+o,jj,kk) ; sy(o) = gr(2,ii,jj+o,kk) ; sz(o) = gr(3,ii,jj,kk+o)
+            enddo
             if (sch_ == 1) then
-               call gideon_fd_divergence_c(2*s_, gr(1,ii-s_:ii+s_,jj,kk), gr(2,ii,jj-s_:jj+s_,kk), &
-                                           gr(3,ii,jj,kk-s_:kk+s_), dxyz, y(ii,jj,kk))
+               call gideon_fd_divergence_c(2*s_, sx(-s_:s_), sy(-s_:s_), sz(-s_:s_), dxyz, y(ii,jj,kk))
             else
-               call gideon_fv_divergence_c(2*s_, gr(1,ii-s_:ii+s_,jj,kk), gr(2,ii,jj-s_:jj+s_,kk), &
-                                           gr(3,ii,jj,kk-s_:kk+s_), dxyz, y(ii,jj,kk))
+               call gideon_fv_divergence_c(2*s_, sx(-s_:s_), sy(-s_:s_), sz(-s_:s_), dxyz, y(ii,jj,kk))
             endif
          enddo
       enddo
@@ -819,19 +870,21 @@ contains
 
    call new_fft(s1)
    call new_fft(s2)
-   call round_robin([2,2,2], coords, nbl)
+   call round_robin(B222, coords, nbl)
    allocate(buf(max(nbl*512,1)), o1(max(nbl*1000,1)), o2(max(nbl*1000,1)))
    do i=1, size(buf)
       buf(i) = sin(0.37_R_P * i + c%rank)
    enddo
    o1 = 0._R_P ; o2 = 0._R_P
-   call s1%initialize_blocks(nblk=[2,2,2], nijk=[8,8,8], ngc=1_I4P, dxyz=[0.1_R_P, 0.1_R_P, 0.1_R_P], level=0_I4P, &
-                             null_xyz=[.false., .false., .false.], isolated=.false., comm=c, stat=stat, errmsg=msg, &
-                             bc=reshape([Z,Z, D,N, P,P], [2,3]))
+   bcx = reshape([Z,Z, D,N, P,P], [2,3])
+   call s1%initialize_blocks(nblk=B222, nijk=C888, ngc=1_I4P, dxyz=DX01, level=0_I4P, &
+                             null_xyz=NO_NULL, isolated=.false., comm=c, stat=stat, errmsg=msg, &
+                             bc=bcx)
    if (failed('initialize_blocks (Z)')) return
-   call s2%initialize_blocks(nblk=[2,2,2], nijk=[8,8,8], ngc=1_I4P, dxyz=[0.1_R_P, 0.1_R_P, 0.1_R_P], level=0_I4P, &
-                             null_xyz=[.false., .false., .false.], isolated=.false., comm=c, stat=stat, errmsg=msg, &
-                             bc=reshape([G,G, D,N, P,P], [2,3]))
+   bcx = reshape([G,G, D,N, P,P], [2,3])
+   call s2%initialize_blocks(nblk=B222, nijk=C888, ngc=1_I4P, dxyz=DX01, level=0_I4P, &
+                             null_xyz=NO_NULL, isolated=.false., comm=c, stat=stat, errmsg=msg, &
+                             bc=bcx)
    if (failed('initialize_blocks (G)')) return
    call s1%solve_blocks(nbl=nbl, coords=coords, buf=buf, factor=FACTOR, gw=1_I4P, out=o1, stat=stat, errmsg=msg)
    if (failed('solve_blocks (Z)')) return
@@ -864,29 +917,33 @@ contains
    select case(name)
    case('mixed-periodic')
       label = 'a periodic face against a Dirichlet one' ; expected = ELISHA_ERR_BC_PERIODIC_PAIR
-      call solver%initialize_blocks(nblk=[2,2,2], nijk=[8,8,8], ngc=1_I4P, dxyz=L/16._R_P, level=0_I4P, &
-                                    null_xyz=[.false., .false., .false.], isolated=.false., comm=c, stat=st(1), &
-                                    errmsg=m_, bc=reshape([P,D, D,D, D,D], [2,3]))
+      bcx = reshape([P,D, D,D, D,D], [2,3])
+      call solver%initialize_blocks(nblk=B222, nijk=C888, ngc=1_I4P, dxyz=DXL16, level=0_I4P, &
+                                    null_xyz=NO_NULL, isolated=.false., comm=c, stat=st(1), &
+                                    errmsg=m_, bc=bcx)
    case('mixed-ghost')
       label = 'a ghost-Dirichlet face against a face kind' ; expected = ELISHA_ERR_BC_GHOST_PAIR
-      call solver%initialize_blocks(nblk=[2,2,2], nijk=[8,8,8], ngc=1_I4P, dxyz=L/16._R_P, level=0_I4P, &
-                                    null_xyz=[.false., .false., .false.], isolated=.false., comm=c, stat=st(1), &
-                                    errmsg=m_, bc=reshape([G,D, D,D, D,D], [2,3]))
+      bcx = reshape([G,D, D,D, D,D], [2,3])
+      call solver%initialize_blocks(nblk=B222, nijk=C888, ngc=1_I4P, dxyz=DXL16, level=0_I4P, &
+                                    null_xyz=NO_NULL, isolated=.false., comm=c, stat=st(1), &
+                                    errmsg=m_, bc=bcx)
    case('wide-isolated')
       label = 'the wide D(G) with isolated boundaries' ; expected = ELISHA_ERR_ISOLATED_WIDE
-      call solver%initialize_blocks(nblk=[2,2,2], nijk=[8,8,8], ngc=4_I4P, dxyz=[0.1_R_P, 0.1_R_P, 0.1_R_P], &
-                                    level=0_I4P, null_xyz=[.false., .false., .false.], isolated=.true., comm=c, &
+      call solver%initialize_blocks(nblk=B222, nijk=C888, ngc=4_I4P, dxyz=DX01, &
+                                    level=0_I4P, null_xyz=NO_NULL, isolated=.true., comm=c, &
                                     stat=st(1), errmsg=m_, dg_order=4_I4P)
    case('zero-mixed')
       label = 'a zero-ghost face against a Dirichlet one' ; expected = ELISHA_ERR_BC_ZERO_GHOST_PAIR
-      call solver%initialize_blocks(nblk=[2,2,2], nijk=[8,8,8], ngc=4_I4P, dxyz=L/16._R_P, level=0_I4P, &
-                                    null_xyz=[.false., .false., .false.], isolated=.false., comm=c, stat=st(1), &
-                                    errmsg=m_, bc=reshape([Z,D, P,P, P,P], [2,3]), dg_order=4_I4P)
+      bcx = reshape([Z,D, P,P, P,P], [2,3])
+      call solver%initialize_blocks(nblk=B222, nijk=C888, ngc=4_I4P, dxyz=DXL16, level=0_I4P, &
+                                    null_xyz=NO_NULL, isolated=.false., comm=c, stat=st(1), &
+                                    errmsg=m_, bc=bcx, dg_order=4_I4P)
    case('free-compact')
       label = 'free-space ghosts with the compact operator' ; expected = ELISHA_ERR_BC_FREE_GHOSTS
-      call solver%initialize_blocks(nblk=[2,2,2], nijk=[4,4,4], ngc=1_I4P, dxyz=L/8._R_P, level=0_I4P, &
-                                    null_xyz=[.false., .false., .false.], isolated=.false., comm=c, stat=st(1), &
-                                    errmsg=m_, bc=reshape([F,F, F,F, F,F], [2,3]), dg_order=0_I4P)
+      bcx = reshape([F,F, F,F, F,F], [2,3])
+      call solver%initialize_blocks(nblk=B222, nijk=C444, ngc=1_I4P, dxyz=DXL8, level=0_I4P, &
+                                    null_xyz=NO_NULL, isolated=.false., comm=c, stat=st(1), &
+                                    errmsg=m_, bc=bcx, dg_order=0_I4P)
    endselect
    lo = st ; hi = st
    call c%min_i4(lo, stat) ; call c%max_i4(hi, stat)

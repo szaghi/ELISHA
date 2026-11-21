@@ -155,6 +155,8 @@ integer(I4P)              :: a, stat                     !< Counter, status.
 integer                   :: ierr, world                 !< MPI error status, the world communicator.
 logical                   :: halting(3)                  !< The FP halting modes of the build (debug: on).
 logical                   :: device                      !< --device: the device backends.
+logical                   :: per3(3)                     !< build's periodic axes, a named actual argument (ifx's
+                                                         !< -check arg_temp_created reports every expression passed).
 real(R_P)                 :: t0, tl                      !< Wall clock at the start, at a leg's start.
 character(:), allocatable :: msg                         !< Message.
 
@@ -362,7 +364,8 @@ contains
 
    call new_mg(mg)
    call new_fft(fft)
-   call build(gr, nk, level, REF_NONE, .false., per_all(nk), stat, msg) ; if (failed('build')) return
+   per3 = per_all(nk) ! named: no argument temporary
+   call build(gr, nk, level, REF_NONE, .false., per3, stat, msg) ; if (failed('build')) return
    buf = source(gr, SRC_RHO)
    call alloc_phi(gr, phi_mg) ; call alloc_phi(gr, phi_fft)
    call mg%setup(gr%mesh, c, stat, msg, max_iterations=MAX_ITERATIONS) ; if (failed('mg setup')) return
@@ -395,7 +398,8 @@ contains
       class(elisha_hierarchical_solver_object), allocatable :: mg  !< Solver.
       real(R_P), allocatable :: buf(:), phi(:,:,:,:) !< Source, potential.
       call new_mg(mg)
-      call build(gr, nk, levels(m), REF_BOX, .false., per_all(nk), stat, msg) ; if (failed('build')) return
+      per3 = per_all(nk) ! named: no argument temporary
+      call build(gr, nk, levels(m), REF_BOX, .false., per3, stat, msg) ; if (failed('build')) return
       buf = source(gr, SRC_RHO)
       call alloc_phi(gr, phi)
       call mg%setup(gr%mesh, c, stat, msg, max_iterations=MAX_ITERATIONS) ; if (failed('mg setup')) return
@@ -445,7 +449,8 @@ contains
       class(elisha_hierarchical_solver_object), allocatable :: mg  !< Solver.
       real(R_P), allocatable :: buf(:), phi(:,:,:,:), ghost(:) !< Source, potential, ghost values.
       call new_mg(mg)
-      call build(gr, nk, levels(m), merge(REF_BOX, REF_NONE, amr), .false., [.false., .false., .false.], stat, msg)
+      per3 = [.false., .false., .false.] ! named: no argument temporary
+      call build(gr, nk, levels(m), merge(REF_BOX, REF_NONE, amr), .false., per3, stat, msg)
       if (failed('build')) return
       buf = source(gr, SRC_RHO_DEV) ! the exact potential solves lap Phi = factor (rho - rho0)
       call alloc_phi(gr, phi)
@@ -504,7 +509,8 @@ contains
       real(R_P), allocatable :: buf(:), phi(:,:,:,:), phi_fft(:,:,:,:), x(:), y(:), ux(:), uy(:) !< Fields, vectors.
       call new_mg(mg)
       call new_fft(fft)
-      call build(gr, 8_I4P, levels(m), merge(REF_STAR, REF_NONE, amr), .true., [.false., .false., .false.], stat, msg)
+      per3 = [.false., .false., .false.] ! named: no argument temporary
+      call build(gr, 8_I4P, levels(m), merge(REF_STAR, REF_NONE, amr), .true., per3, stat, msg)
       if (failed('build')) return
       buf = source(gr, SRC_STAR, prof)
       call alloc_phi(gr, phi)
@@ -583,7 +589,8 @@ contains
 
    call new_mg(mg)
    call new_fft(fft)
-   call build(gr, nk, level, REF_NONE, .false., per_bc(bc, nk), stat, msg) ; if (failed('build')) return
+   per3 = per_bc(bc, nk) ! named: no argument temporary
+   call build(gr, nk, level, REF_NONE, .false., per3, stat, msg) ; if (failed('build')) return
    buf = source(gr, SRC_RHO)
    call alloc_phi(gr, phi_mg) ; call alloc_phi(gr, phi_fft)
    call mg%setup(gr%mesh, c, stat, msg, max_iterations=MAX_ITERATIONS, bc=bc) ; if (failed('mg setup')) return
@@ -609,6 +616,7 @@ contains
    integer(I4P), intent(in) :: levels(2) !< Base levels.
    real(R_P)                :: e_phi(2), h(2), trunc(2), sym(2), order, vsum(3), v, xyz(3) !< Measures.
    real(R_P)                :: e_gh(2), order_gh, pg(3), hd !< Domain-face ghost error, its order, ghost centre.
+   real(R_P)                :: v3(3)     !< The three maxima, reduced.
    integer(I4P)             :: unfilled(2), its(2), m, i, j, k, b, cc, ijk(3), nb(3), dd, s !< Counters.
    integer(I4P)             :: nbnd(5)   !< Boundary faces over the ranks, then per kind.
    logical                  :: ok        !< Pass flag.
@@ -621,7 +629,8 @@ contains
       real(R_P), allocatable :: buf(:), phi(:,:,:,:), ghost(:), pe(:), ye(:), yb(:) !< Fields, vectors.
       real(R_P)              :: cdx(3) !< Cell spacing.
       call new_mg(mg)
-      call build(gr, nk, levels(m), REF_CORNER, .false., per_bc(bc, nk), stat, msg) ; if (failed('build')) return
+      per3 = per_bc(bc, nk) ! named: no argument temporary
+      call build(gr, nk, levels(m), REF_CORNER, .false., per3, stat, msg) ; if (failed('build')) return
       buf = source(gr, SRC_LAPM)
       call alloc_phi(gr, phi)
       call mg%setup(gr%mesh, c, stat, msg, max_iterations=MAX_ITERATIONS, bc=bc) ; if (failed('mg setup')) return
@@ -645,7 +654,7 @@ contains
             do j=1, NB_SIDE
                do i=1, NB_SIDE
                   cc = cc + 1
-                  pe(cc) = phi_m(cell_centre(gr, b, [i, j, k]), gr%active)
+                  pe(cc) = phi_m(cell_centre(gr, b, i, j, k), gr%active)
                   vsum = vsum + [v, v * pe(cc), v * phi(i,j,k,b)]
                enddo
             enddo
@@ -667,7 +676,7 @@ contains
             do j=1, NB_SIDE
                do i=1, NB_SIDE
                   cc = cc + 1
-                  xyz = cell_centre(gr, b, [i, j, k])
+                  xyz = cell_centre(gr, b, i, j, k)
                   trunc(m) = max(trunc(m), abs((ye(cc) + yb(cc)) / v - lap_m(xyz, gr%active)))
                   e_phi(m) = max(e_phi(m), abs((phi(i,j,k,b) - vsum(3)) - (pe(cc) - vsum(2))))
                   do dd=1, 3
@@ -688,7 +697,8 @@ contains
             enddo
          enddo
       enddo
-      call allmax([trunc(m), e_phi(m), e_gh(m)], trunc(m), e_phi(m), e_gh(m))
+      v3 = [trunc(m), e_phi(m), e_gh(m)] ! named: no argument temporary
+      call allmax(v3, trunc(m), e_phi(m), e_gh(m))
       call isum(unfilled(m:m))
       call isum(nbnd)
       h(m) = gr%lb(1) / NB_SIDE / 2._R_P**levels(m)
@@ -733,15 +743,18 @@ contains
    call new_mg(mg(1)%s) ; call new_mg(mg(2)%s)
    iso = .false. ; if (present(isolated)) iso = isolated
    if (iso) then
-      call build(gr, 8_I4P, level, merge(REF_STAR, REF_NONE, amr), .true., [.false., .false., .false.], stat, msg)
+      per3 = [.false., .false., .false.] ! named: no argument temporary
+      call build(gr, 8_I4P, level, merge(REF_STAR, REF_NONE, amr), .true., per3, stat, msg)
       if (failed('build')) return
       buf = source(gr, SRC_STAR, PROFILE_POLYTROPE)
    elseif (present(bc)) then
-      call build(gr, nk, level, merge(REF_BOX, REF_NONE, amr), .false., per_bc(bc, nk), stat, msg)
+      per3 = per_bc(bc, nk) ! named: no argument temporary
+      call build(gr, nk, level, merge(REF_BOX, REF_NONE, amr), .false., per3, stat, msg)
       if (failed('build')) return
       buf = source(gr, SRC_RHO)
    else
-      call build(gr, nk, level, merge(REF_BOX, REF_NONE, amr), .false., per_all(nk), stat, msg)
+      per3 = per_all(nk) ! named: no argument temporary
+      call build(gr, nk, level, merge(REF_BOX, REF_NONE, amr), .false., per3, stat, msg)
       if (failed('build')) return
       buf = source(gr, SRC_RHO)
    endif
@@ -811,7 +824,8 @@ contains
    call new_mg(mg)
    call new_fft(fft)
    note = ''
-   call build(gr, nk, level, merge(REF_CORNER, REF_NONE, amr), .false., per_bc(bc, nk), stat, msg)
+   per3 = per_bc(bc, nk) ! named: no argument temporary
+   call build(gr, nk, level, merge(REF_CORNER, REF_NONE, amr), .false., per3, stat, msg)
    if (failed('build')) return
    buf = source(gr, SRC_RHO)
    call alloc_phi(gr, phi_f) ; call alloc_phi(gr, phi_d)
@@ -868,8 +882,8 @@ contains
 
    bcv(:,:,1) = BC_PEC_XY ; bcv(:,:,2) = BC_PEC_XY
    bcv(:,:,3) = reshape([P_, P_, P_, P_, N_, N_], [2, 3])
-   call build(gr, 8_I4P, merge(2_I4P, 1_I4P, amr), merge(REF_CORNER, REF_NONE, amr), .false., per_bc(BC_PEC_XY, 8_I4P), &
-              stat, msg)
+   per3 = per_bc(BC_PEC_XY, 8_I4P) ! named: no argument temporary
+   call build(gr, 8_I4P, merge(2_I4P, 1_I4P, amr), merge(REF_CORNER, REF_NONE, amr), .false., per3, stat, msg)
    if (failed('build')) return
    buf = source(gr, SRC_RHO)
    allocate(phi_v(1-NGC:NB_SIDE+NGC,1-NGC:NB_SIDE+NGC,1-NGC:NB_SIDE+NGC,1:max(gr%nb,1),3))
@@ -919,23 +933,28 @@ contains
    select case(name)
    case('mixed') ! a grid periodic along x only, no bc
       label = 'mixed periodic and bounded axes without bc' ; expected = ELISHA_ERR_BC_MISSING
-      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., [.true., .false., .false.], st(1), m_)
+      per3 = [.true., .false., .false.] ! named: no argument temporary
+      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., per3, st(1), m_)
       if (st(1) == ELISHA_OK) call mg%setup(gr%mesh, c, st(1), m_)
    case('bc-mismatch') ! the same grid, bc periodic along y as well
       label = 'bc periodic along an axis the grid bounds' ; expected = ELISHA_ERR_BC_PERIODICITY
-      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., [.true., .false., .false.], st(1), m_)
+      per3 = [.true., .false., .false.] ! named: no argument temporary
+      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., per3, st(1), m_)
       if (st(1) == ELISHA_OK) call mg%setup(gr%mesh, c, st(1), m_, bc=reshape([P_, P_, P_, P_, D_, D_], [2, 3]))
    case('bc-mixed-ghost') ! the same grid, a ghost-Dirichlet face and a Dirichlet one along y
       label = 'a ghost-Dirichlet face against a face kind' ; expected = ELISHA_ERR_BC_GHOST_PAIR
-      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., [.true., .false., .false.], st(1), m_)
+      per3 = [.true., .false., .false.] ! named: no argument temporary
+      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., per3, st(1), m_)
       if (st(1) == ELISHA_OK) call mg%setup(gr%mesh, c, st(1), m_, bc=reshape([P_, P_, G_, D_, D_, D_], [2, 3]))
    case('boundary-refined') ! the isolated cube at level 1, the octant x, y, z > 0 refined
       label = 'isolated, a refined leaf on the boundary' ; expected = ELISHA_ERR_ISOLATED_BOUNDARY_LEAF
-      call build(gr, 8_I4P, 1_I4P, REF_OCTANT, .true., [.false., .false., .false.], st(1), m_)
+      per3 = [.false., .false., .false.] ! named: no argument temporary
+      call build(gr, 8_I4P, 1_I4P, REF_OCTANT, .true., per3, st(1), m_)
       if (st(1) == ELISHA_OK) call mg%setup(gr%mesh, c, st(1), m_, isolated=.true.)
    case('flail-ghost-fft') ! boundary values on the spectral path (a uniform grid bounded along z)
       label = 'facade, boundary values on the spectral path' ; expected = ELISHA_ERR_GHOST_VALUES
-      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., per_bc(BC_PEC_XY, 8_I4P), st(1), m_)
+      per3 = per_bc(BC_PEC_XY, 8_I4P) ! named: no argument temporary
+      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., per3, st(1), m_)
       if (st(1) == ELISHA_OK) call fl_setup(fl, gr%mesh, st(1), m_, bc=BC_PEC_XY)
       if (st(1) == ELISHA_OK) then
          buf = source(gr, SRC_RHO)
@@ -944,11 +963,13 @@ contains
       endif
    case('flail-isolated-bc') ! isolated with bc
       label = 'facade, isolated with bc' ; expected = ELISHA_ERR_ISOLATED_BC
-      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., [.false., .false., .false.], st(1), m_)
+      per3 = [.false., .false., .false.] ! named: no argument temporary
+      call build(gr, 8_I4P, 1_I4P, REF_NONE, .false., per3, st(1), m_)
       if (st(1) == ELISHA_OK) call fl_setup(fl, gr%mesh, st(1), m_, isolated=.true., bc=BC_B)
    case('flail-wide-amr') ! the wide operator on AMR (the corner refined)
       label = 'facade, the wide D(G) on AMR' ; expected = ELISHA_ERR_DG_AMR
-      call build(gr, 8_I4P, 2_I4P, REF_CORNER, .false., per_bc(BC_B, 8_I4P), st(1), m_)
+      per3 = per_bc(BC_B, 8_I4P) ! named: no argument temporary
+      call build(gr, 8_I4P, 2_I4P, REF_CORNER, .false., per3, st(1), m_)
       if (st(1) == ELISHA_OK) call fl_setup(fl, gr%mesh, st(1), m_, bc=BC_B, dg_order=4_I4P)
    endselect
    lo = st ; hi = st
@@ -1006,7 +1027,7 @@ contains
          do j=1, NB_SIDE
             do i=1, NB_SIDE
                cc = cc + 1
-               pe(cc) = phi_exact(cell_centre(gr, b, [i, j, k]), gr%active)
+               pe(cc) = phi_exact(cell_centre(gr, b, i, j, k), gr%active)
             enddo
          enddo
       enddo
@@ -1028,7 +1049,7 @@ contains
          do j=1, NB_SIDE
             do i=1, NB_SIDE
                cc = cc + 1
-               xyz = cell_centre(gr, b, [i, j, k])
+               xyz = cell_centre(gr, b, i, j, k)
                t(1) = max(t(1), abs(ye(cc) / v - FACTOR * (rho(xyz, gr%active) - rmean)))
             enddo
          enddo
@@ -1058,7 +1079,7 @@ contains
       do k=1, gr%nk
          do j=1, NB_SIDE
             do i=1, NB_SIDE
-               xyz = cell_centre(gr, b, [i, j, k])
+               xyz = cell_centre(gr, b, i, j, k)
                e(1) = max(e(1), abs(phi(i,j,k,b) - phi_exact(xyz, gr%active)))
                do d=1, 3
                   if (.not.gr%active(d)) cycle
@@ -1103,7 +1124,7 @@ contains
       do k=1, gr%nk
          do j=1, NB_SIDE
             do i=1, NB_SIDE
-               xyz = cell_centre(gr, b, [i, j, k])
+               xyz = cell_centre(gr, b, i, j, k)
                e(1) = max(e(1), abs(phi(i,j,k,b) - phi_sphere(xyz, prof)))
                do d=1, 3
                   do s=-1, 1, 2
@@ -1278,6 +1299,9 @@ contains
    integer(I8P), allocatable :: key(:)    !< Morton keys.
    integer(I4P)              :: nbl(3), n, i, j, k, o, lmax, lo, hi, g, t4(4) !< Counters.
    integer(I8P)              :: tk        !< A key.
+   integer(I4P)              :: sc(3), nijk(3), nblk1(3) !< Scaled coordinates, cells per block, blocks at level 0.
+   real(R_P)                 :: dx0(3), emin3(3) !< Spacing at level 0, lower corner (named actual arguments).
+   logical                   :: per(3), null3(3) !< Periodic and null axes (named actual arguments).
 
    call gr%mesh%destroy
    gr%nk = nk ; gr%level = level ; gr%cube = cube
@@ -1289,7 +1313,7 @@ contains
    do k=0, nbl(3)-1
       do j=0, nbl(2)-1
          do i=0, nbl(1)-1
-            if (marked(gr, [i, j, k, level], refine)) then
+            if (marked(gr, i, j, k, level, refine)) then
                do o=0, 7
                   if (gr%null(3) .and. ibits(o, 2, 1) == 1) cycle
                   n = n + 1
@@ -1306,7 +1330,8 @@ contains
    lmax = maxval(tmp(4,1:n))
    allocate(key(n))
    do i=1, n
-      key(i) = morton(tmp(1:3,i) * 2_I4P**(lmax - tmp(4,i)))
+      sc = tmp(1:3,i) * 2_I4P**(lmax - tmp(4,i)) ! named: no argument temporary
+      key(i) = morton(sc)
    enddo
    do i=2, n ! insertion sort by key (a few hundred leaves)
       tk = key(i) ; t4 = tmp(:,i)
@@ -1324,8 +1349,9 @@ contains
    hi = int((int(c%rank + 1, I8P) * n) / c%nranks, I4P)
    gr%nb = hi - lo
    gr%gid = [(g, g=lo+1, hi)]
-   call gr%mesh%init([NB_SIDE, NB_SIDE, nk], NGC, [1_I4P, 1_I4P, 1_I4P], gr%lb / real([NB_SIDE, NB_SIDE, nk], R_P), &
-                     gr%emin, periodic, gr%null, gr%leaves(:,lo+1:hi), st, m_)
+   nijk = [NB_SIDE, NB_SIDE, nk] ; nblk1 = 1_I4P ; dx0 = gr%lb / real(nijk, R_P) ; per = periodic ! named arguments
+   null3 = gr%null ; emin3 = gr%emin
+   call gr%mesh%init(nijk, NGC, nblk1, dx0, emin3, per, null3, gr%leaves(:,lo+1:hi), st, m_)
    endsubroutine build
 
    pure function morton(ijk) result(key)
@@ -1342,14 +1368,16 @@ contains
    enddo
    endfunction morton
 
-   pure function marked(gr, c4, refine) result(mk)
+   pure function marked(gr, i, j, k, lv, refine) result(mk)
    !< ADAM's marks: a block refined by its centre (the block's corner and size in ADAM's arithmetic).
-   type(grid_t), intent(in) :: gr     !< Grid.
-   integer(I4P), intent(in) :: c4(4)  !< Block.
-   integer(I4P), intent(in) :: refine !< REF_*.
+   type(grid_t), intent(in) :: gr          !< Grid.
+   integer(I4P), intent(in) :: i, j, k, lv !< Block (i, j, k, level), scalars (no argument temporary).
+   integer(I4P), intent(in) :: refine      !< REF_*.
+   integer(I4P)             :: c4(4)       !< Block.
    logical                  :: mk     !< Marked.
    real(R_P)                :: bdx(3), bmin(3), ctr(3) !< Block size, corner, centre.
 
+   c4 = [i, j, k, lv]
    bdx = block_dx(gr, c4(4))
    bmin = gr%emin + c4(1:3) * bdx
    ctr = 0.5_R_P * (bmin + (bmin + bdx))
@@ -1408,15 +1436,18 @@ contains
    v = product(merge(cell_dx(gr, b), 1._R_P, gr%active))
    endfunction cell_volume
 
-   pure function cell_centre(gr, b, ijk) result(xyz)
-   !< The centre of cell ijk (ghosts included) of this rank's block b, in ADAM's arithmetic (grid_object%cell_xyz).
-   type(grid_t), intent(in) :: gr     !< Grid.
-   integer(I4P), intent(in) :: b      !< Block.
-   integer(I4P), intent(in) :: ijk(3) !< Cell.
-   real(R_P)                :: xyz(3) !< Centre.
+   pure function cell_centre(gr, b, i, j, k) result(xyz)
+   !< The centre of cell (i, j, k) (ghosts included) of this rank's block b, in ADAM's arithmetic
+   !< (grid_object%cell_xyz). Scalar indices: an array constructor per call is an argument temporary, which ifx's
+   !< `-check arg_temp_created` reports at every call.
+   type(grid_t), intent(in) :: gr      !< Grid.
+   integer(I4P), intent(in) :: b       !< Block.
+   integer(I4P), intent(in) :: i, j, k !< Cell.
+   real(R_P)                :: xyz(3)  !< Centre.
    real(R_P)                :: bdx(3), cdx(3), bmin(3) !< Block size, cell size, block corner.
-   integer(I4P)             :: nijk(3) !< Cells per block.
+   integer(I4P)             :: nijk(3), ijk(3) !< Cells per block, the cell.
 
+   ijk = [i, j, k]
    nijk = [NB_SIDE, NB_SIDE, gr%nk]
    bdx = block_dx(gr, gr%mesh%coords(4,b))
    cdx = bdx / nijk
@@ -1505,7 +1536,7 @@ contains
          do j=1, NB_SIDE
             do i=1, NB_SIDE
                p = p + 1
-               xyz = cell_centre(gr, b, [i, j, k])
+               xyz = cell_centre(gr, b, i, j, k)
                select case(kind)
                case(SRC_RHO)
                   buf(p) = rho(xyz, gr%active)
