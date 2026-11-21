@@ -167,7 +167,8 @@ use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC
                               ELISHA_BC_ZERO_GHOSTS, ELISHA_PATH_HIERARCHICAL, ELISHA_OPERATOR_CSR, &
                               ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_INTERNAL, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE, &
-                          ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_GHOST_VALUES, ELISHA_ERR_ARGUMENT, elisha_set_error
+                          ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_GHOST_VALUES, ELISHA_ERR_ARGUMENT, &
+                          ELISHA_ERR_NOT_CONVERGED, elisha_set_error
 use elisha_setup_checks, only : elisha_check_bc, elisha_check_ghost_count, elisha_check_isolated, &
                                 elisha_check_isolated_mesh, elisha_check_path, elisha_check_periodicity, &
                                 elisha_check_unbounded
@@ -312,6 +313,8 @@ type :: elisha_hierarchical_solver_object
    real(R_P)                 :: tolerance_used=0._R_P  !< Stop tolerance of the last solve (the round-off floor of the
                                                        !< source when above `tolerance`).
    real(R_P)                 :: factor_mean=0._R_P     !< Mean convergence factor per iteration of the last solve.
+   logical                   :: converged=.true.       !< The last solve reached its stop tolerance (isolated: both
+                                                       !< solves of the James step); else ELISHA_ERR_NOT_CONVERGED.
    real(R_P),    allocatable :: u(:)                   !< The last solution (warm start).
    logical                   :: has_guess=.false.      !< u holds a solution of the current mesh.
    ! work vectors (issue #84, E6a): allocated once by setup, kept by a backend where its hooks compute
@@ -435,6 +438,7 @@ contains
    self%has_guess = .false.
    self%level_operator = ELISHA_OPERATOR_CSR
    self%vcycle_form = ELISHA_VCYCLE_SYMMETRIC
+   self%converged = .true.
    self%comm = elisha_comm_object() ! a copy: the caller frees its communicator
    self%is_initialized = .false.
    endsubroutine destroy
@@ -1084,7 +1088,9 @@ contains
    !< backend's arrays: the source is staged to a host copy (`stage_source`), `phi` to the host and back
    !< (`stage_potential`; contiguous), around the host solve, so the result is bitwise the one from host arrays. This
    !< host solver has no device arrays: `on_device=.true.` returns `ELISHA_ERR_ARGUMENT` (an argument every rank
-   !< passes alike, refused before any collective).
+   !< passes alike, refused before any collective). An FCG that reaches `max_iterations` above its stop tolerance
+   !< returns `ELISHA_ERR_NOT_CONVERGED` on every rank (`converged` false), `phi` the last iterate with its ghosts
+   !< filled (and the energy its); ADAM printed a warning on rank 0 and returned as if converged.
    class(elisha_hierarchical_solver_object), intent(inout) :: self    !< The solver.
    type(elisha_mesh_object),       intent(in)            :: mesh    !< The mesh (this rank's blocks).
    real(R_P),                      intent(in)            :: buf(1:) !< Packed interior source.
@@ -1100,21 +1106,37 @@ contains
    integer(I4P)           :: code    !< Status of the staging.
 
    dev = .false. ; if (present(on_device)) dev = on_device
+   self%converged = .true.
    if (.not.dev) then
       call self%solve_packed_host(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, &
                                   energy=energy, ghost=ghost)
-      return
+   else
+      call self%stage_source(buf, bufh, code)
+      if (code /= ELISHA_OK) then
+         call elisha_set_error(stat, errmsg, code, 'elisha_hierarchical_solver_object%solve_packed: on_device needs '// &
+                               'a device backend (the host solver has no device arrays)')
+         return
+      endif
+      call self%stage_potential(phi, to_host=.true.)
+      call self%solve_packed_host(mesh=mesh, buf=bufh, factor=factor, phi=phi, stat=stat, errmsg=errmsg, &
+                                  energy=energy, ghost=ghost)
+      if (stat == ELISHA_OK) call self%stage_potential(phi, to_host=.false.)
    endif
-   call self%stage_source(buf, bufh, code)
-   if (code /= ELISHA_OK) then
-      call elisha_set_error(stat, errmsg, code, 'elisha_hierarchical_solver_object%solve_packed: on_device needs a '// &
-                            'device backend (the host solver has no device arrays)')
-      return
+   ! ELISHA notes E1c, decision C: a solve that stopped at max_iterations above its tolerance is a status (every rank
+   ! alike: the residual is reduced), phi the last iterate with its ghosts filled
+   if (stat == ELISHA_OK .and. .not.self%converged) then
+      if (self%isolated) then
+         call elisha_set_error(stat, errmsg, ELISHA_ERR_NOT_CONVERGED, 'elisha_hierarchical_solver_object%'// &
+            'solve_packed: the James step''s FCG solves took '//trim(str(self%iterations0, .true.))//' and '// &
+            trim(str(self%iterations, .true.))//' iterations (max_iterations '//trim(str(self%max_iterations, .true.))// &
+            '), the second leaving the residual at '//trim(str(self%residual))//' (stop tolerance '// &
+            trim(str(self%tolerance_used))//')')
+      else
+         call elisha_set_error(stat, errmsg, ELISHA_ERR_NOT_CONVERGED, 'elisha_hierarchical_solver_object%'// &
+            'solve_packed: the FCG reached max_iterations ('//trim(str(self%iterations, .true.))//') with the '// &
+            'residual at '//trim(str(self%residual))//' (stop tolerance '//trim(str(self%tolerance_used))//')')
+      endif
    endif
-   call self%stage_potential(phi, to_host=.true.)
-   call self%solve_packed_host(mesh=mesh, buf=bufh, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy, &
-                               ghost=ghost)
-   if (stat == ELISHA_OK) call self%stage_potential(phi, to_host=.false.)
    endsubroutine solve_packed
 
    subroutine solve_packed_host(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
@@ -1136,6 +1158,7 @@ contains
    real(R_P),                      intent(in),  optional :: ghost(1:) !< The boundary value per boundary face.
    real(R_P), allocatable :: g(:), s(:), u_(:) !< Ghost values, screening charge, the last solution aside.
    integer(I4P)           :: n, ub(3)          !< Interior cells of this rank, upper bounds of phi.
+   logical                :: conv0             !< The zero-ghost solve of the James step converged.
    character(*), parameter :: HERE='elisha_hierarchical_solver_object%solve_packed' !< For the messages.
 
    if (.not.self%is_initialized) then ! every rank alike: setup is collective
@@ -1176,10 +1199,12 @@ contains
       return
    endif
    self%iterations0 = self%iterations
+   conv0 = self%converged
    call self%apply_bt(self%u, s)
    call move_alloc(self%u, self%u0) ; call move_alloc(u_, self%u)
    call self%ghost_green(s, g, stat, errmsg) ; if (stat /= ELISHA_OK) return
    call self%solve_fcg(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy, ghost=g)
+   self%converged = self%converged .and. conv0
    endsubroutine solve_packed_host
 
    subroutine solve_fcg(self, mesh, buf, factor, phi, stat, errmsg, energy, ghost)
@@ -1271,10 +1296,8 @@ contains
       self%iterations = it
       self%residual = self%vec_relmax(self%wr, self%vol, n, fmax, stat) ; if (stat /= ELISHA_OK) return
    enddo
-   if (self%residual > tol .and. fmax > 0._R_P .and. self%me == 0) &
-      print '(A)', 'rank '//trim(str(self%me, .true.))//': warning: elisha_hierarchical_solver_object: '// &
-                   trim(str(self%max_iterations, .true.))//' FCG iterations left the residual at '// &
-                   trim(str(self%residual))//' (tolerance '//trim(str(tol))//')'
+   ! the residual is reduced over the ranks: every rank agrees (ADAM printed a warning on rank 0 here and went on)
+   self%converged = .not.(self%residual > tol .and. fmax > 0._R_P)
    self%factor_mean = 0._R_P
    if (self%iterations > 0 .and. r0 > 0._R_P .and. self%residual > 0._R_P) &
       self%factor_mean = (self%residual / r0)**(1._R_P / self%iterations)

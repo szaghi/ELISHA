@@ -23,7 +23,8 @@ program elisha_test_solver_mpi
 !< (the same), isolated with `bc` (`ELISHA_ERR_ISOLATED_BC`), an unknown path (`ELISHA_ERR_ARGUMENT`), the wide D(G) on
 !< the hierarchical path (`ELISHA_ERR_DG_AMR`), a context not initialised, a solve and `boundary_faces` before the setup
 !< and after a failed one (`ELISHA_ERR_NOT_INITIALIZED`, `path()` 0), `on_device` on the host solvers of both paths
-!< (`ELISHA_ERR_ARGUMENT`). The FP traps of a debug build are off around
+!< (`ELISHA_ERR_ARGUMENT`); and an FCG stopped at `max_iterations` = 1 on the AMR mesh (`ELISHA_ERR_NOT_CONVERGED`,
+!< `diagnostics()%converged` false, the energy set and finite; then converged with 200). The FP traps of a debug build are off around
 !< `MPI_Init` only (hwloc raises IEEE flags inside it).
 #ifndef ELISHA_NO_MPI
 use mpi
@@ -33,7 +34,8 @@ use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_ERR_MESH_LEVELS, ELISHA_ERR_GHOST
                    ELISHA_ERR_ARGUMENT, ELISHA_ERR_DG_AMR, ELISHA_ERR_NOT_INITIALIZED, ELISHA_BC_PERIODIC,           &
                    ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_DIRICHLET_GHOST, ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL,         &
                    ELISHA_PATH_HIERARCHICAL, elisha_comm_object, elisha_mesh_object, elisha_spectral_solver_object, &
-                   elisha_hierarchical_solver_object, elisha_solver_object, elisha_diagnostics_object
+                   elisha_hierarchical_solver_object, elisha_solver_object, elisha_diagnostics_object, &
+                   ELISHA_ERR_NOT_CONVERGED
 implicit none
 real(R_P),    parameter  :: TOL_MG=1.e-11_R_P       !< FCG tolerance requested.
 integer(I4P), parameter  :: MAX_IT=100_I4P          !< FCG iterations allowed.
@@ -359,6 +361,30 @@ contains
       buf = 1._R_P ; phi = 0._R_P
       call facade%solve_packed(amr, buf, FACTOR, phi, stat, msg, on_device=.true.)
       call expect(stat, ELISHA_ERR_ARGUMENT, 'on_device on the host hierarchical solver')
+   endif
+   ! an FCG stopped at max_iterations above its tolerance (ELISHA notes E1c, decision C): a status, the last iterate
+   call facade%setup(amr, c, stat, msg, max_iterations=1_I4P)
+   call expect(stat, ELISHA_OK, 'AMR setup, max_iterations 1')
+   if (stat == ELISHA_OK) then
+      block
+      real(R_P) :: e !< Energy.
+      integer(I4P) :: i !< Counter.
+      do i=1, size(buf)
+         buf(i) = C0 + sin(0.37_R_P * i + 1.1_R_P * wrank) ! no smooth structure: one V-cycle cannot solve it
+      enddo
+      e = -huge(1._R_P)
+      call facade%solve_packed(amr, buf, FACTOR, phi, stat, msg, energy=e)
+      call expect(stat, ELISHA_ERR_NOT_CONVERGED, 'an FCG stopped at max_iterations = 1 (facade)')
+      d = facade%diagnostics()
+      if (d%converged .or. d%iterations /= 1) call fail('not converged: diagnostics converged '// &
+         trim(merge('T', 'F', d%converged))//', iterations '//itoa(d%iterations)//' (expected F, 1)')
+      if (e == -huge(1._R_P) .or. e /= e) call fail('not converged: the energy not set')
+      call facade%setup(amr, c, stat, msg, max_iterations=200_I4P)
+      if (stat == ELISHA_OK) call facade%solve_packed(amr, buf, FACTOR, phi, stat, msg, energy=e)
+      call expect(stat, ELISHA_OK, 'the same solve with max_iterations = 200 (facade)')
+      d = facade%diagnostics()
+      if (.not.d%converged) call fail('converged: diagnostics converged false')
+      endblock
    endif
    call facade%destroy
    call uni%destroy

@@ -32,7 +32,7 @@ assume a field layout.
 | Ghost-Dirichlet | Odd about the ghost centres, 2 (n + 1) cells (type-I sine transform) | round-off |
 | Isolated (Hockney and Eastwood) | Zero padding to a 13-smooth size at or above 2 (n + ngc), convolution with the lattice Green's function | about 1e-13 per offset |
 | Wide D(G), order p | Eigenvalue `-s_p(theta)^2 / dx^2`; the checkerboard modes dropped | round-off |
-| Zero-ghost faces with D(G) | CG on rank 0, preconditioned by the p = 2 operator inverted exactly (2^z FFT sub-solves) | 1e-12 |
+| Zero-ghost faces with D(G) | CG on rank 0, preconditioned by the p = 2 operator inverted exactly (2^z FFT sub-solves); at `max_iterations` (200) above the tolerance, `ELISHA_ERR_NOT_CONVERGED` on every rank with `phi` the last iterate (ADAM printed a warning) | 1e-12 |
 | Free-space ghosts with D(G) | The zero-ghost solve with the ghosts' free-space potential on the right-hand side | 1e-12 |
 
 ADAM's prototypes, now in `scripts/prototypes/`, measured the CG of D(G) with zero-ghost faces at 1, 17, 24 and 30

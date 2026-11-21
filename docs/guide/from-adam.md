@@ -29,6 +29,7 @@ ELISHA.
 | Reading `flail%mg%nbnd`, `%bnd_kind`, `%bnd_dir`, `%bnd_x` (to build `ghost`) | `solver%boundary_faces(kinds, dir, x, stat, errmsg)`: the same list in the same order |
 | `poisson_fft_object%wall` | `solver%diagnostics()%wall`, `solver%reset_wall()` |
 | `mpih%error_stop` (fatal) | `stat` and `errmsg`; the facade's refusals are listed in [The solver facade](./solver#refusals) |
+| The warning `... FCG iterations left the residual at ...` (or `CG iterations`), printed on rank 0, the solve returned as converged | `stat = ELISHA_ERR_NOT_CONVERGED` on every rank, `phi` the last iterate with its ghosts filled, `diagnostics()%converged` `.false.`: treat it as a warning to keep ADAM's behaviour |
 | `option_name` (the client's key in the fatal message) | None: the caller words its own message from `stat` |
 | `MG_SEAM_GHOST_SCALE` (from `adam_poisson_mg_object`) | `MG_SEAM_GHOST_SCALE` (from `elisha`) |
 

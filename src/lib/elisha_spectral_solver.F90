@@ -120,7 +120,8 @@ use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC
                               ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_PATH_SPECTRAL
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_NO_FFT, ELISHA_ERR_FFT_PLAN, ELISHA_ERR_MESH_LEVELS,           &
                           ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE,              &
-                          ELISHA_ERR_ENERGY_REDUNDANT, ELISHA_ERR_ARGUMENT, elisha_set_error
+                          ELISHA_ERR_ENERGY_REDUNDANT, ELISHA_ERR_ARGUMENT, ELISHA_ERR_NOT_CONVERGED,         &
+                          elisha_set_error
 use elisha_setup_checks, only : elisha_check_bc, elisha_check_dg_order, elisha_check_isolated, elisha_check_path, &
                                 elisha_check_periodicity, elisha_check_reach, elisha_check_unbounded
 use elisha_spectral, only : elisha_axis_eigenvalue, elisha_axis_transform_size, elisha_dg_stencil
@@ -158,6 +159,8 @@ type :: elisha_spectral_solver_object
    real(R_P)                 :: stencil(-8:8)=0._R_P   !< The 1-D D1 D1 stencil (times h^2), offsets -p..p.
    real(R_P)                 :: tolerance=1.e-12_R_P   !< Relative max-norm residual to stop.
    integer(I4P)              :: max_iterations=200_I4P !< CG iterations at most.
+   logical                   :: converged=.true.       !< The last CG solve reached its tolerance (every rank); else
+                                                       !< ELISHA_ERR_NOT_CONVERGED.
    integer(I4P)              :: iterations=0_I4P       !< Iterations of the last solve.
    real(R_P)                 :: residual=0._R_P        !< Relative residual of the last solve.
    logical                   :: redundant=.false.      !< Every rank holds the global arrays and solves (#84 E5c).
@@ -377,6 +380,7 @@ contains
    if (allocated(self%g_free))   deallocate(self%g_free)
    self%free = .false.
    self%pcg = .false. ; self%nsub = 0_I4P ; self%iterations = 0_I4P ; self%residual = 0._R_P
+   self%converged = .true.
    self%dg_order = 0_I4P ; self%axis_order = 0_I4P ; self%stencil = 0._R_P ; self%null_xyz = .false.
    self%n = 1_I4P ; self%m = 1_I4P ; self%nijk = 1_I4P ; self%ngc = 0_I4P ; self%level = 0_I4P ; self%dxyz = 0._R_P
    self%isolated = .false.
@@ -672,7 +676,10 @@ contains
    !< present on the device (OpenACC), a device backend's arrays: the source is staged to a host copy
    !< (`stage_source`), `phi` to the host and back (`stage_potential`; contiguous), around the host solve, so the result
    !< is bitwise the one from host arrays. This host solver has no device arrays: `on_device=.true.` returns
-   !< `ELISHA_ERR_ARGUMENT` (an argument every rank passes alike, refused before any collective).
+   !< `ELISHA_ERR_ARGUMENT` (an argument every rank passes alike, refused before any collective). The CG of the wide
+   !< D(G) (zero- or free-ghost faces) that reaches `max_iterations` above its tolerance returns
+   !< `ELISHA_ERR_NOT_CONVERGED` on every rank (`converged` false), `phi` the last iterate with its ghosts filled; ADAM
+   !< printed a warning on rank 0 and returned as if converged.
    class(elisha_spectral_solver_object), intent(inout)         :: self   !< The solver.
    type(elisha_mesh_object),             intent(in)            :: mesh   !< The mesh (this rank's block coordinates).
    real(R_P),                            intent(in)            :: buf(1:) !< Packed interior source of this rank.
@@ -687,19 +694,21 @@ contains
    integer(I4P)           :: code    !< Status of the staging.
 
    dev = .false. ; if (present(on_device)) dev = on_device
+   self%converged = .true.
    if (.not.dev) then
       call self%solve_packed_host(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy)
-      return
+   else
+      call self%stage_source(buf, bufh, code)
+      if (code /= ELISHA_OK) then
+         call elisha_set_error(stat, errmsg, code, 'elisha_spectral_solver_object%solve_packed: on_device needs a '// &
+                               'device backend (the host solver has no device arrays)')
+         return
+      endif
+      call self%stage_potential(phi, to_host=.true.)
+      call self%solve_packed_host(mesh=mesh, buf=bufh, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy)
+      ! not converged (ELISHA notes E1c, decision C): phi is the last iterate, staged back as a converged one
+      if (stat == ELISHA_OK .or. stat == ELISHA_ERR_NOT_CONVERGED) call self%stage_potential(phi, to_host=.false.)
    endif
-   call self%stage_source(buf, bufh, code)
-   if (code /= ELISHA_OK) then
-      call elisha_set_error(stat, errmsg, code, 'elisha_spectral_solver_object%solve_packed: on_device needs a '// &
-                            'device backend (the host solver has no device arrays)')
-      return
-   endif
-   call self%stage_potential(phi, to_host=.true.)
-   call self%solve_packed_host(mesh=mesh, buf=bufh, factor=factor, phi=phi, stat=stat, errmsg=errmsg, energy=energy)
-   if (stat == ELISHA_OK) call self%stage_potential(phi, to_host=.false.)
    endsubroutine solve_packed
 
    subroutine solve_packed_host(self, mesh, buf, factor, phi, stat, errmsg, energy)
@@ -747,7 +756,7 @@ contains
    allocate(rbuf(max(nbl*product(self%nijk + 2 * self%ngc),1)))
    call self%solve_blocks(nbl=nbl, coords=coords, buf=buf, factor=factor, gw=self%ngc, out=rbuf, stat=stat, &
                           errmsg=errmsg, energy=energy)
-   if (stat /= ELISHA_OK) return
+   if (stat /= ELISHA_OK .and. stat /= ELISHA_ERR_NOT_CONVERGED) return ! not converged: the last iterate, unpacked
    c = 0
    do b=1, nbl
       do k=1-self%ngc, ub(3)
@@ -791,6 +800,7 @@ contains
    real(R_P),    allocatable                        :: u_pad(:,:,:)    !< Rank 0, E2b: the solution with its ghosts.
    real(R_P)                                        :: e               !< sum_cells f phi.
    real(R_P)                                        :: e_(1)           !< e, as the broadcast's buffer.
+   integer(I4P)                                     :: nc_(1)          !< 1: rank 0's CG did not converge.
    integer(I4P)                                     :: ub(3)           !< Upper bounds per direction.
    integer(I4P)                                     :: g(3)            !< Global cell index, wrapped.
    integer(I4P)                                     :: b, i, j, k, c, r !< Counters.
@@ -913,6 +923,13 @@ contains
    ! the rank-0 solve fails on rank 0 only (no FFT library, a backend's failure): every rank takes its status
    call agree_status(self%comm, stat, errmsg, HERE)
    if (stat /= ELISHA_OK) return
+   if (self%pcg) then ! the CG's convergence, rank 0's, to every rank (ELISHA notes E1c, decision C)
+      nc_ = 0
+      if (self%comm%rank == 0 .and. .not.self%converged) nc_ = 1
+      call self%comm%max_i4(nc_, stat)
+      if (collective_failed(stat, errmsg, HERE)) return
+      self%converged = nc_(1) == 0
+   endif
    t(2) = self%comm%wtime()
    ! scatter back, ghosts included
    call self%comm%scatterv_r(buf_all, rcounts, rdispls, out, nbl*nghost, stat)
@@ -925,6 +942,12 @@ contains
    endif
    t(3) = self%comm%wtime()
    self%wall = self%wall + (t(1:3) - t(0:2))
+   ! ELISHA notes E1c, decision C: the CG of the wide D(G) stopped at max_iterations above its tolerance (agreed over
+   ! the ranks above), `out` the last iterate with its ghosts filled
+   if (.not.self%converged) &
+      call elisha_set_error(stat, errmsg, ELISHA_ERR_NOT_CONVERGED, HERE//': the CG of the wide D(G) reached '// &
+         'max_iterations ('//trim(str(self%max_iterations, .true.))//') above its tolerance ('// &
+         trim(str(self%tolerance))//'); rank 0 holds its iterations and residual')
    endsubroutine solve_blocks
 
    subroutine solve_everywhere(self, nbl, coords, buf, factor, gw, out, stat, errmsg)
@@ -1663,10 +1686,8 @@ contains
          d = z + (rz_new / rz) * d
          rz = rz_new
       enddo
-      if (self%residual > self%tolerance) print '(A)', 'rank '//trim(str(self%comm%rank, .true.))// &
-         ': warning: elisha_spectral_solver_object: '// &
-         trim(str(self%max_iterations, .true.))//' CG iterations left the residual at '//trim(str(self%residual))// &
-         ' (tolerance '//trim(str(self%tolerance))//')'
+      ! rank 0 only; solve_blocks agrees it over the ranks (ADAM printed a warning here and went on)
+      self%converged = .not.(self%residual > self%tolerance)
    endif
    self%f_global = u
    endsubroutine solve_pcg

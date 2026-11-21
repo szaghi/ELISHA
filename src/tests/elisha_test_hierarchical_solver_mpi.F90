@@ -21,7 +21,9 @@ program elisha_test_hierarchical_solver_mpi
 !< on every rank: a mesh not 2:1 balanced (`ELISHA_ERR_MESH_BALANCE`), isolated with boundary kinds
 !< (`ELISHA_ERR_ISOLATED_BC`), a solve before the setup (`ELISHA_ERR_NOT_INITIALIZED`), a `phi` of the wrong shape
 !< (`ELISHA_ERR_SHAPE`), fewer ghost values than boundary faces (`ELISHA_ERR_GHOST_COUNT`), a `vcycle` that is no
-!< `ELISHA_VCYCLE_*` (`ELISHA_ERR_ARGUMENT`). The FP traps of a debug
+!< `ELISHA_VCYCLE_*` (`ELISHA_ERR_ARGUMENT`); and an FCG stopped at `max_iterations` = 1 above its tolerance, on the
+!< periodic AMR corner mesh and on the uniform isolated one with its root capped at 64 cells (`ELISHA_ERR_NOT_CONVERGED`, `converged` false, `phi` the last iterate: every
+!< value finite, ghosts included, the interior not zero), then the same solver with enough iterations converged. The FP traps of a debug
 !< build are off around `MPI_Init` only (hwloc raises IEEE flags inside it).
 #ifndef ELISHA_NO_MPI
 use mpi
@@ -29,6 +31,7 @@ use mpi
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_ERR_MESH_BALANCE, ELISHA_ERR_ISOLATED_BC, ELISHA_ERR_NOT_INITIALIZED, &
                    ELISHA_ERR_SHAPE, ELISHA_ERR_GHOST_COUNT, ELISHA_ERR_ARGUMENT, ELISHA_BC_DIRICHLET_GHOST,          &
+                   ELISHA_ERR_NOT_CONVERGED,                                                                        &
                    ELISHA_VCYCLE_ADAM, elisha_comm_object, elisha_mesh_object, elisha_hierarchical_solver_object
 implicit none
 real(R_P),    parameter  :: TOL_MG=1.e-11_R_P       !< FCG tolerance requested.
@@ -73,6 +76,8 @@ call run_case(label='(d) AMR 2^3, ghost-Dir.  ', nblk0=[2_I4P, 2_I4P, 2_I4P], dx
 call run_case(label='(e) uniform 2^3, isolated', nblk0=[2_I4P, 2_I4P, 2_I4P], dx0=[1._R_P, 1._R_P, 1._R_P] / 16._R_P, &
               amr=.false., refine=[0_I4P, 0_I4P, 0_I4P], root_cells=0_I4P, periodic=.false., isolated=.true.)
 call check_refusals
+call check_not_converged(periodic=.true.)
+call check_not_converged(periodic=.false.)
 nfail = failures
 call c%max_i4(nfail, stat)
 call c%destroy(stat)
@@ -343,6 +348,68 @@ contains
    call solver%destroy
    call mesh%destroy
    endsubroutine check_refusals
+
+   subroutine check_not_converged(periodic)
+   !< ELISHA notes E1c, decision C: an FCG stopped at max_iterations above its tolerance is ELISHA_ERR_NOT_CONVERGED on
+   !< every rank, phi the last iterate (finite everywhere, ghosts included); the next solve with enough iterations
+   !< converges. The AMR corner mesh, periodic, or isolated (the James step: its two solves).
+   logical, intent(in)                     :: periodic !< Periodic, else isolated.
+   type(elisha_mesh_object)                :: mesh     !< Mesh.
+   type(elisha_hierarchical_solver_object) :: solver   !< Solver.
+   real(R_P), allocatable :: buf(:), phi(:,:,:,:)      !< Source, potential.
+   real(R_P)              :: amax(1)                   !< Max |phi| over the interiors and the ranks.
+   logical                :: finite(1)                 !< phi finite everywhere (ghosts included), over the ranks.
+   integer(I4P)           :: b, i, n, nan_(1)          !< Counters.
+   character(:), allocatable :: what                   !< Label.
+
+   what = merge('periodic', 'isolated', periodic)
+   ! periodic: the AMR corner mesh; isolated (every boundary leaf at the coarsest level): uniform, the root capped at
+   ! 64 cells (levels inside the blocks: no exact V-cycle)
+   call make_mesh(mesh, [2_I4P, 2_I4P, 2_I4P], [1._R_P, 1._R_P, 1._R_P] / 16._R_P, periodic, [0_I4P, 0_I4P, 0_I4P], &
+                  periodic, .false., stat, msg)
+   if (stat /= ELISHA_OK) then
+      call fail('not converged, '//what//': mesh init: '//msg)
+      return
+   endif
+   allocate(buf(max(mesh%nb*product(NIJK),1)))
+   allocate(phi(1-NGHOST:NIJK(1)+NGHOST,1-NGHOST:NIJK(2)+NGHOST,1-NGHOST:NIJK(3)+NGHOST,1:max(mesh%nb,1)))
+   n = 0
+   do b=1, mesh%nb
+      do i=1, product(NIJK)
+         n = n + 1
+         buf(n) = C0 + sin(0.37_R_P * n + 1.1_R_P * wrank) ! no smooth structure: one V-cycle cannot solve it
+      enddo
+   enddo
+   phi = 0._R_P
+   call solver%setup(mesh, c, stat, msg, tolerance=TOL_MG, max_iterations=1_I4P, isolated=.not.periodic, &
+                     root_cells=64_I4P)
+   if (stat /= ELISHA_OK) then
+      call fail('not converged, '//what//': setup: '//msg)
+      return
+   endif
+   call solver%solve_packed(mesh, buf, FACTOR, phi, stat, msg)
+   call expect(stat, ELISHA_ERR_NOT_CONVERGED, 'an FCG stopped at max_iterations = 1, '//what)
+   if (solver%converged) call fail('not converged, '//what//': converged is true')
+   finite = .true.
+   amax = 0._R_P
+   do b=1, mesh%nb
+      if (any(phi(:,:,:,b) /= phi(:,:,:,b)) .or. any(abs(phi(:,:,:,b)) > huge(1._R_P))) finite = .false.
+      amax = max(amax(1), maxval(abs(phi(1:NIJK(1),1:NIJK(2),1:NIJK(3),b))))
+   enddo
+   nan_ = merge(0_I4P, 1_I4P, finite(1))
+   call c%max_i4(nan_, stat)
+   call c%max_real8(amax, stat)
+   if (nan_(1) /= 0) call fail('not converged, '//what//': phi not finite')
+   if (.not.(amax(1) > 0._R_P)) call fail('not converged, '//what//': phi is zero (no last iterate)')
+   ! the same solver, enough iterations: a new setup (max_iterations is a setup argument)
+   call solver%setup(mesh, c, stat, msg, tolerance=TOL_MG, max_iterations=MAX_IT, isolated=.not.periodic, &
+                     root_cells=64_I4P)
+   if (stat == ELISHA_OK) call solver%solve_packed(mesh, buf, FACTOR, phi, stat, msg)
+   call expect(stat, ELISHA_OK, 'the same solve with max_iterations = '//itoa(MAX_IT)//', '//what)
+   if (.not.solver%converged) call fail('not converged, '//what//': converged is false after a converged solve')
+   call solver%destroy
+   call mesh%destroy
+   endsubroutine check_not_converged
 
    subroutine expect(got, want, what)
    !< A status against the expected one.

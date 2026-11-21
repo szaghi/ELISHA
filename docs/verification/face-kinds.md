@@ -47,6 +47,7 @@ ELISHA (gfortran 16.2, np 2; iterations and orders the same on np 1 and 3, and o
 | E2b: CG iterations, $p = 2, 4, 6, 8$ | $\le 40$ | 1, 18–19, 26, 31–32 | the prototype's 1, 17, 24, 30 (another problem) |
 | E2b: iterations at $p = 4$, 16 and 32 cells per axis | within 1 | 19, 19 | |
 | E2b: compact, Z/Z against G/G | bitwise | 0 values differ | bitwise |
+| E2b: the CG stopped at `max_iterations` = 1 (p = 4, Z/Z D/D N/N); then 200 | `ELISHA_ERR_NOT_CONVERGED`, the last iterate finite; converged | as expected, np 1 to 3 | a rank-0 warning (not ADAM's status) |
 | E3a: PRISM's FD and FV, direct solves | $10^{-11}$ | $5\cdot10^{-16}$ to $9.9\cdot10^{-16}$ | $10^{-15}$ |
 | E3a: zero-ghost (CG) solves | $10^{-9}$ | $\le 8.4\cdot10^{-13}$ | |
 | E3c: free ghosts against the direct sum | $10^{-12}$ | $\le 2.9\cdot10^{-16}$ | |

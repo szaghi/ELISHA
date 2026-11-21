@@ -75,9 +75,12 @@ The call is collective. The mesh must be the setup's: a regrid needs a new setup
 | `residual` | Relative max-norm residual of the CG; 0 for a direct FFT | Relative max-norm residual of the FCG |
 | `tolerance_used` | The CG's stop tolerance (1e-12); 0 for a direct FFT | The FCG's stop tolerance: `tolerance`, or the source's round-off floor when larger |
 | `pcg` | The solve is the CG of the wide D(G) | `.false.` |
+| `converged` | The CG reached its tolerance; `.true.` for a direct FFT | The FCG reached its stop tolerance (isolated: both solves of the James step) |
 | `wall(3)` | Wall time (s) of the spectral solve on this rank: gather, solve, scatter, accumulated since the setup or `reset_wall` | The same for the root solver |
 
 The spectral CG runs on rank 0: there `iterations` and `residual` are the CG's, while the other ranks report 0.
+`converged` is the same on every rank. When it is `.false.`, the solve returned `ELISHA_ERR_NOT_CONVERGED`, with
+`phi` the last iterate ([the status codes](./errors-comm-mesh#status-a-code-and-a-message-never-a-stop)).
 
 ## Boundary values
 

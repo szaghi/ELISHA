@@ -18,7 +18,7 @@ call mg%solve_packed(mesh, buf, factor, phi, stat, errmsg, energy=e, ghost=g)
 | Procedure | Role |
 |-----------|------|
 | `setup(mesh, comm, stat, errmsg[, tolerance][, max_iterations][, coarse][, isolated][, bc][, root_cells][, level_operator][, vcycle])` | Validate the mesh, check the arguments, assemble the operators and the level hierarchy, size the root (a spectral solver of the class of `coarse`) |
-| `solve_packed(mesh, buf, factor, phi, stat, errmsg[, energy][, ghost])` | FCG to `tolerance`, warm-started while the mesh is unchanged; `phi` with every ghost layer; `ghost`: the value of each boundary face |
+| `solve_packed(mesh, buf, factor, phi, stat, errmsg[, energy][, ghost])` | FCG to `tolerance`, warm-started while the mesh is unchanged; `phi` with every ghost layer; `ghost`: the value of each boundary face. At `max_iterations` above the stop tolerance: `ELISHA_ERR_NOT_CONVERGED` on every rank, `phi` the last iterate, `converged` `.false.` (ADAM printed a warning) |
 | `symmetry_defect(x, y, stat)`, `apply_a(x, y, stat)` | Verification: `abs(x.Ay - y.Ax) / (abs(x) abs(Ay))`, `y = A x` |
 | `vcycle_symmetry_defect(x, y, stat)` | Verification: `abs(x.My - y.Mx) / (abs(x) abs(My))`, `M` the V-cycle |
 | `apply_b(g, y)`, `apply_bt(x, s)` | `y = B g`, `s = B^T x` over the boundary faces (`nbnd`, `bnd_row`, `bnd_w`, `bnd_kind`, `bnd_dir`, `bnd_x`) |

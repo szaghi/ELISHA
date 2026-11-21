@@ -59,6 +59,13 @@ of ADAM's refusals:
 | `ELISHA_ERR_NOT_INITIALIZED` | 33 | the solver is used before its setup |
 | `ELISHA_ERR_SHAPE` | 34 | an array argument has the wrong shape or size |
 | `ELISHA_ERR_ENERGY_REDUNDANT` | 35 | no energy with the redundant spectral solve |
+| `ELISHA_ERR_NOT_CONVERGED` | 36 | an iterative solve reached max_iterations above its tolerance (phi holds the last iterate, its ghosts filled) |
+
+`ELISHA_ERR_NOT_CONVERGED` is not one of ADAM's refusals. It is returned when the hierarchical solver's FCG, or the
+spectral solver's CG of the wide D(G), reaches `max_iterations` above its tolerance. Every rank returns it. ADAM
+printed a warning on rank 0 and returned as if converged. Unlike the other codes, it comes with a result: `phi` is the
+last iterate, with its ghosts filled, and so is the energy. A caller that kept ADAM's behaviour on purpose can treat
+the code as a warning; `diagnostics()%converged` tells the same.
 
 ## The communication context
 

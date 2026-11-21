@@ -9,7 +9,10 @@ module elisha_status
 !<
 !< The codes come from ADAM's refusals (`error_stop` in FLAIL, ADAM 669d0bdd): (A) the setup checks of the arguments,
 !< (B) the collective checks of the mesh, (C) runtime and internal failures; `elisha_status_name(code)` is the
-!< parameter's name, `elisha_status_text(code)` its one-line meaning.
+!< parameter's name, `elisha_status_text(code)` its one-line meaning. One code is not ADAM's: an iterative solve (the
+!< hierarchical solver's FCG, the spectral solver's CG of the wide D(G)) that reaches `max_iterations` above its
+!< tolerance returns `ELISHA_ERR_NOT_CONVERGED`, every rank alike, with `phi` the last iterate (ghosts filled), where
+!< ADAM printed a warning on rank 0 and returned as if converged (ELISHA notes E1c, decision C).
 use penf, only : I4P
 implicit none
 private
@@ -51,6 +54,7 @@ public :: ELISHA_ERR_GHOST_COUNT
 public :: ELISHA_ERR_NOT_INITIALIZED
 public :: ELISHA_ERR_SHAPE
 public :: ELISHA_ERR_ENERGY_REDUNDANT
+public :: ELISHA_ERR_NOT_CONVERGED
 
 integer(I4P), parameter :: ELISHA_OK = 0_I4P                     !< Success.
 integer(I4P), parameter :: ELISHA_ERR_ARGUMENT = 1_I4P           !< An argument is out of its range.
@@ -88,7 +92,8 @@ integer(I4P), parameter :: ELISHA_ERR_GHOST_COUNT = 32_I4P       !< Fewer bounda
 integer(I4P), parameter :: ELISHA_ERR_NOT_INITIALIZED = 33_I4P   !< The solver is used before its setup.
 integer(I4P), parameter :: ELISHA_ERR_SHAPE = 34_I4P             !< An array argument has the wrong shape or size.
 integer(I4P), parameter :: ELISHA_ERR_ENERGY_REDUNDANT = 35_I4P  !< No energy with the redundant spectral solve.
-integer(I4P), parameter :: ELISHA_STATUS_LAST = 35_I4P          !< The largest code.
+integer(I4P), parameter :: ELISHA_ERR_NOT_CONVERGED = 36_I4P     !< An iterative solve stopped above its tolerance.
+integer(I4P), parameter :: ELISHA_STATUS_LAST = 36_I4P          !< The largest code.
 
 contains
    pure subroutine elisha_set_error(stat, errmsg, code, msg)
@@ -144,6 +149,7 @@ contains
    case(ELISHA_ERR_NOT_INITIALIZED) ; name = 'ELISHA_ERR_NOT_INITIALIZED'
    case(ELISHA_ERR_SHAPE) ; name = 'ELISHA_ERR_SHAPE'
    case(ELISHA_ERR_ENERGY_REDUNDANT) ; name = 'ELISHA_ERR_ENERGY_REDUNDANT'
+   case(ELISHA_ERR_NOT_CONVERGED) ; name = 'ELISHA_ERR_NOT_CONVERGED'
    case default ; name = 'ELISHA_UNKNOWN_STATUS'
    endselect
    endfunction elisha_status_name
@@ -195,6 +201,8 @@ contains
    case(ELISHA_ERR_NOT_INITIALIZED) ; text = 'the solver is used before its setup'
    case(ELISHA_ERR_SHAPE) ; text = 'an array argument has the wrong shape or size'
    case(ELISHA_ERR_ENERGY_REDUNDANT) ; text = 'no energy with the redundant spectral solve'
+   case(ELISHA_ERR_NOT_CONVERGED) ; text = 'an iterative solve reached max_iterations above its tolerance (phi holds' // &
+      ' the last iterate, its ghosts filled)'
    case default ; text = 'an unknown status code'
    endselect
    endfunction elisha_status_text

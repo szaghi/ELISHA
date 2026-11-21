@@ -40,7 +40,8 @@ use elisha_comm, only : elisha_comm_object
 use elisha_mesh, only : elisha_mesh_object
 use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_ARGUMENT, ELISHA_ERR_ISOLATED_BC, ELISHA_ERR_MESH_LEVELS, &
-                          ELISHA_ERR_GHOST_VALUES, ELISHA_ERR_NOT_INITIALIZED, elisha_set_error
+                          ELISHA_ERR_GHOST_VALUES, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_NOT_CONVERGED, &
+                          elisha_set_error
 use elisha_setup_checks, only : elisha_check_dg_order, elisha_check_path
 use elisha_spectral_solver, only : elisha_spectral_solver_object
 use elisha_hierarchical_solver, only : elisha_hierarchical_solver_object
@@ -65,6 +66,9 @@ type :: elisha_diagnostics_object
                                          !< 0 for a direct spectral solve.
    logical      :: pcg=.false.         !< The spectral solve is the preconditioned CG of the wide D(G) with zero- or
                                        !< free-ghost faces (ADAM's `fft%pcg`); .false. on the hierarchical path.
+   logical      :: converged=.true.    !< The last iterative solve (FCG or CG) reached its tolerance; when not, the
+                                       !< solve returned `ELISHA_ERR_NOT_CONVERGED` (every rank alike). .true. for a
+                                       !< direct spectral solve.
    real(R_P)    :: wall(3)=0._R_P      !< Wall time (s) of the spectral `solve_blocks` on this rank, accumulated since the
                                        !< setup or `reset_wall`: gather (redistribution), solve, scatter (return). On the
                                        !< hierarchical path, its root solver's.
@@ -148,12 +152,14 @@ contains
       d%pcg = self%spectral%pcg
       if (d%pcg) then
          d%iterations     = self%spectral%iterations
+      d%converged      = self%spectral%converged
          d%residual       = self%spectral%residual
          d%tolerance_used = self%spectral%tolerance
       endif
       d%wall = self%spectral%wall
    case(ELISHA_PATH_HIERARCHICAL)
       d%iterations     = self%hierarchical%iterations
+      d%converged      = self%hierarchical%converged
       d%iterations0    = self%hierarchical%iterations0
       d%residual       = self%hierarchical%residual
       d%tolerance_used = self%hierarchical%tolerance_used
@@ -337,7 +343,7 @@ contains
       endif
       call self%spectral%solve_packed(mesh=mesh, buf=buf, factor=factor, phi=phi, stat=stat, errmsg=errmsg, &
                                       energy=energy, on_device=on_device)
-      if (stat /= ELISHA_OK) return
+      if (stat /= ELISHA_OK .and. stat /= ELISHA_ERR_NOT_CONVERGED) return ! not converged: phi and energy are set
       if (present(energy)) energy = energy * product(self%spectral%dxyz) ! uniform mesh: one cell volume
    case default
       call elisha_set_error(stat, errmsg, ELISHA_ERR_NOT_INITIALIZED, 'elisha_solver_object%solve_packed: called '// &

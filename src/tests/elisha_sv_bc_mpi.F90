@@ -28,7 +28,9 @@ program elisha_sv_bc_mpi
 !<   - `--zero` (E2b): zero-ghost faces with D(G) p = 2..8, preconditioned CG on rank 0: a manufactured `u`, its source
 !<     `D(G) u / factor` computed here, recovered to `TOL_PCG`, the ghosts returned against the rules, the CG
 !<     iterations at most `MAX_PCG_IT`, at p = 4 within one between 16 and 32 cells per axis; and the compact operator
-!<     with zero ghosts equal to ghost-Dirichlet, bitwise;
+!<     with zero ghosts equal to ghost-Dirichlet, bitwise; the CG stopped at `max_iterations` = 1 above its tolerance
+!<     returns `ELISHA_ERR_NOT_CONVERGED` on every rank with `converged` false and the last iterate (finite, ghosts
+!<     included), and the same solver with 200 iterations converges (ELISHA notes E1c, decision C; not ADAM's);
 !<   - `--prism` (E3a): `div(grad phi) = f` with PRISM's centred FD and FV operators of order 2 s, s = 1..4, the
 !<     solution's returned ghosts read (`TOL_PRISM`; `TOL_PCG` with zero-ghost faces);
 !<   - `--free` (E3c): free-space ghosts with D(G) p = 2, 4, 6: the ghost slabs against the direct sum
@@ -62,6 +64,7 @@ use elisha, only : I4P, I8P, R_P, ELISHA_OK, ELISHA_BC_PERIODIC, ELISHA_BC_DIRIC
                    ELISHA_BC_DIRICHLET_GHOST, ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS,                     &
                    ELISHA_ERR_BC_PERIODIC_PAIR, ELISHA_ERR_BC_GHOST_PAIR, ELISHA_ERR_ISOLATED_WIDE,             &
                    ELISHA_ERR_BC_ZERO_GHOST_PAIR, ELISHA_ERR_BC_FREE_GHOSTS, elisha_status_name,                &
+                   ELISHA_ERR_NOT_CONVERGED,                                                                    &
                    elisha_comm_object, elisha_spectral_solver_object
 use gideon_tables, only : FD_D1_S1, FD_D1_S2, FD_D1_S3, FD_D1_S4
 use gideon_operators_3d, only : gideon_fd_gradient_c, gideon_fd_divergence_c, gideon_fv_gradient_c, &
@@ -258,6 +261,11 @@ else
       call leg_start
       call check_zero_compact
       call leg_row('E2b compact Z=G  ', 'Z/Z D/N P/P against G/G D/N P/P, max |diff| '//fmt(lmax(1))//' (bitwise)')
+      tl = c%wtime()
+      call leg_start
+      call check_zero_not_converged
+      call leg_row('E2b not converged', 'p = 4 Z/Z D/D N/N, max_iterations 1: ELISHA_ERR_NOT_CONVERGED, the last '// &
+                   'iterate finite; 200: converged')
       call check_refusal('zero-mixed')
    endif
    ! PRISM's own operators (E3a): div(grad phi) = f with GIDEON's FD and FV centred derivatives
@@ -964,6 +972,46 @@ contains
    ! ---------------------------------------------------------------------------------------------------------------------
    ! the eigenfunctions, the rules, the operators (ADAM's, D1 from GIDEON's rows)
    ! ---------------------------------------------------------------------------------------------------------------------
+   subroutine check_zero_not_converged
+   !< E2b (ELISHA notes E1c, decision C): the CG of D(G) p = 4, Z/Z D/D N/N, stopped at max_iterations = 1 above its
+   !< tolerance: ELISHA_ERR_NOT_CONVERGED on every rank, `converged` false, `out` the last iterate (finite, ghosts
+   !< included); then max_iterations = 200: converged.
+   integer(I4P), parameter :: P4=4_I4P, NB(3)=[4_I4P, 4_I4P, 4_I4P], NC(3)=[4_I4P, 4_I4P, 4_I4P] !< Order, blocks, cells.
+   class(elisha_spectral_solver_object), allocatable :: solver !< The solver.
+   integer(I4P), allocatable :: coords(:,:) !< This rank's block coordinates.
+   real(R_P),    allocatable :: buf(:), out(:) !< Packed source and potential.
+   integer(I4P)              :: nbl, i, bad(1) !< Blocks of this rank, counter, non-finite values over the ranks.
+   logical                   :: ok           !< Pass flag.
+
+   call new_fft(solver)
+   call round_robin(NB, coords, nbl)
+   allocate(buf(max(nbl*product(NC),1)), out(max(nbl*product(NC+2*P4),1)))
+   do i=1, size(buf)
+      buf(i) = sin(0.37_R_P * i + 1.1_R_P * c%rank) ! no smooth structure: one CG step cannot solve it
+   enddo
+   call solver%initialize_blocks(nblk=NB, nijk=NC, ngc=P4, dxyz=L/(NB*NC), level=0_I4P, null_xyz=[.false., .false., &
+                                 .false.], isolated=.false., comm=c, stat=stat, errmsg=msg,                        &
+                                 bc=reshape([Z,Z, D,D, N,N], [2,3]), dg_order=P4)
+   if (failed('initialize_blocks')) return
+   solver%max_iterations = 1_I4P
+   out = 0._R_P
+   call solver%solve_blocks(nbl=nbl, coords=coords, buf=buf, factor=FACTOR, gw=P4, out=out, stat=stat, errmsg=msg)
+   ok = stat == ELISHA_ERR_NOT_CONVERGED .and. .not.solver%converged
+   bad = 0
+   if (any(out /= out) .or. any(abs(out) > huge(1._R_P))) bad = 1
+   call c%max_i4(bad, i)
+   ok = ok .and. bad(1) == 0
+   if (c%rank == 0) print '(A)', '   p = 4, Z/Z D/D N/N, max_iterations 1: '//elisha_status_name(stat)// &
+      ', the last iterate '//trim(merge('finite    ', 'NOT FINITE', bad(1) == 0))//merge(' ok  ', ' FAIL', ok)
+   solver%max_iterations = 200_I4P
+   call solver%solve_blocks(nbl=nbl, coords=coords, buf=buf, factor=FACTOR, gw=P4, out=out, stat=stat, errmsg=msg)
+   ok = ok .and. stat == ELISHA_OK .and. solver%converged
+   if (c%rank == 0) print '(A)', '   p = 4, Z/Z D/D N/N, max_iterations 200: '//elisha_status_name(stat)// &
+      merge(' ok  ', ' FAIL', stat == ELISHA_OK .and. solver%converged)
+   lok = lok .and. ok
+   call solver%destroy
+   endsubroutine check_zero_not_converged
+
    subroutine round_robin(nblk, coords, nbl)
    !< This rank's blocks of an nblk lattice (x fastest), dealt round robin [3,max(nbl,1)].
    integer(I4P),              intent(in)    :: nblk(3)     !< Blocks per direction.
