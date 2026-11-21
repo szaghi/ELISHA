@@ -92,7 +92,7 @@ Every device test ran on an A30 (driver 575.51, nvfortran 26.9, CUDA 12.9) throu
 
 | Test | Result |
 |------|--------|
-| `elisha_test_device_parity_mpi`: ELISHA's device solvers against ADAM's device solvers on the same source (phi with ghosts, energy; multigrid iterations, residuals, `A x`, symmetry defect, cold and warm solves); 11 spectral and 12 hierarchical cases | Bitwise on all 23 at np 1, 2, 3 (ranks sharing the GPU) |
+| `elisha_test_device_parity_mpi`: ELISHA's device solvers (the multigrid with `vcycle=ELISHA_VCYCLE_ADAM`) against ADAM's device solvers on the same source (phi with ghosts, energy; multigrid iterations, residuals, `A x`, symmetry defect, cold and warm solves); 11 spectral and 12 hierarchical cases | Bitwise on all 23 at np 1, 2, 3 (ranks sharing the GPU) |
 | The same, device against host | FFT 6.5e-16, multigrid `A x` bitwise, potential 1.8e-15, energy 1.3e-15 (relative) |
 | `elisha_test_adam_device_oracle_mpi`: ADAM's own device against its host | FFT 5.2e-16, `A x` bitwise, potential 5.9e-16 |
 

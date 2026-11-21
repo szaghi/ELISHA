@@ -53,10 +53,22 @@ module elisha_hierarchical_solver
 !<   other row (a block face: a halo, a 2:1 seam's ghost term, a domain face's kind) keeps its CSR entries. The stencil
 !<   takes the CSR entries' order (per active axis: the diagonal's -w, the low neighbour's w, the diagonal's -w, the
 !<   high neighbour's w; the smoother the neighbours only), so the results are bitwise the CSR ones.
+!< - one change of the numbers, the default (ELISHA notes E1c): the V-cycle is symmetric (`ELISHA_VCYCLE_SYMMETRIC`).
+!<   ADAM's way up reads the coarser correction across a 2:1 face (`E_l`, rows the level's cells next to a coarser
+!<   leaf), its way down restricts into the shadow cells only and never applies the adjoint `E_l^T` to the coarser
+!<   leaves: the preconditioner is not symmetric on AMR, its symmetric part indefinite on some seam modes, and FCG,
+!<   whose step is `(p, r) / (p, A p)` with `(p, r) = (M r, r)`, stalls where `(M r, r)` vanishes (the E1c 2-D N/D P/P
+!<   solve: 200 iterations, the residual at 0.1157, ADAM's code alike). The way down now subtracts `E_l^T e_l` from the
+!<   coarser level's right-hand side after the restriction (`etl`, assembled from the coarse side: a coarser leaf's
+!<   face to a refined neighbour, the fine cells on that face, the fine face weight, `E_l`'s entries transposed); the
+!<   V-cycle is then symmetric (`vcycle_symmetry_defect`), E1c converges in 15 iterations and every AMR solve of the
+!<   verification takes 19-35% fewer (uniform meshes have no seam: unchanged). `setup(..., vcycle=ELISHA_VCYCLE_ADAM)`
+!<   keeps ADAM's V-cycle, for the bitwise parity with the verbatim oracle.
 !< What did not change: every floating-point expression, every loop and its order, every accumulation, the assembly
-!< order of the triplets and the CSR rows, the halo plans, the FCG and V-cycle sequence and the MPI calls, so the
-!< potential, the iterations and the residual are meant to be ADAM's bitwise on every rank count (the tests hold them
-!< to the verbatim oracle, `src/tests/adam_poisson_mg_object`). Issue numbers below (#81, #84, #87) are ADAM's.
+!< order of the triplets and the CSR rows, the halo plans, the FCG and V-cycle sequence and the MPI calls, so with
+!< `vcycle=ELISHA_VCYCLE_ADAM` (and on every uniform mesh) the potential, the iterations and the residual are meant to
+!< be ADAM's bitwise on every rank count (the tests hold them to the verbatim oracle, `src/tests/adam_poisson_mg_object`).
+!< Issue numbers below (#81, #84, #87) are ADAM's.
 !<
 !< Solves `L_h phi = factor (f - mean(f))` on the leaf cells of a 2:1-balanced octree (quadtree in 2-D, a null axis),
 !< periodic in every active direction, with `L_h` a composite second-order Laplacian that is **symmetric and
@@ -153,7 +165,7 @@ use elisha_mesh, only : elisha_mesh_object
 use elisha_keys, only : elisha_bkey, elisha_ckey, elisha_kdecode, elisha_hash_table, ELISHA_KEY_LEVEL_OFFSET
 use elisha_parameters, only : ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
                               ELISHA_BC_ZERO_GHOSTS, ELISHA_PATH_HIERARCHICAL, ELISHA_OPERATOR_CSR, &
-                              ELISHA_OPERATOR_STENCIL
+                              ELISHA_OPERATOR_STENCIL, ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM
 use elisha_status, only : ELISHA_OK, ELISHA_ERR_INTERNAL, ELISHA_ERR_NOT_INITIALIZED, ELISHA_ERR_SHAPE, &
                           ELISHA_ERR_MESH_CHANGED, ELISHA_ERR_GHOST_VALUES, ELISHA_ERR_ARGUMENT, elisha_set_error
 use elisha_setup_checks, only : elisha_check_bc, elisha_check_ghost_count, elisha_check_isolated, &
@@ -262,6 +274,7 @@ type :: elisha_hierarchical_solver_object
    integer(I4P), allocatable :: g_dst(:,:)             !< Ghost fill destinations (i,j,k,b) [4,rows].
    type(dcsr),   allocatable :: al(:)                  !< Level operators [lbot+1:lmax].
    type(dcsr),   allocatable :: el(:)                  !< Level ghost terms from level l-1 [lbot+1:lmax].
+   type(dcsr),   allocatable :: etl(:)                 !< Their adjoint E_l^T, rows the level l-1 cells [lbot+1:lmax].
    type(dcsr),   allocatable :: rl(:)                  !< Restriction l -> l-1 [lbot+1:lmax].
    type(dcsr),   allocatable :: pl(:)                  !< Prolongation l-1 -> l [lbot+1:lmax].
    type(rvec),   allocatable :: diag(:)                !< Level operator diagonals [lbot+1:lmax].
@@ -293,6 +306,7 @@ type :: elisha_hierarchical_solver_object
    integer(I4P)              :: max_iterations=200_I4P !< FCG iterations at most.
    integer(I4P)              :: sweeps=2_I4P           !< Red-black sweeps per level, down and up.
    integer(I4P)              :: level_operator=ELISHA_OPERATOR_CSR !< The level operators' form (M7, audit C2).
+   integer(I4P)              :: vcycle_form=ELISHA_VCYCLE_SYMMETRIC !< The V-cycle (ELISHA notes E1c).
    integer(I4P)              :: iterations=0_I4P       !< Iterations of the last solve.
    real(R_P)                 :: residual=0._R_P        !< Relative residual of the last solve.
    real(R_P)                 :: tolerance_used=0._R_P  !< Stop tolerance of the last solve (the round-off floor of the
@@ -319,6 +333,7 @@ type :: elisha_hierarchical_solver_object
       procedure, pass(self) :: setup           !< Check the mesh and the arguments, assemble the operators.
       procedure, pass(self) :: solve_packed    !< Solve for phi from the packed interior source (host or device arrays).
       procedure, pass(self) :: symmetry_defect !< |x . A y - y . A x| / (|x| |A y|) (verification).
+      procedure, pass(self) :: vcycle_symmetry_defect !< |x . M y - y . M x| / (|x| |M y|), M the V-cycle (verification).
       procedure, pass(self) :: apply_a        !< y = A x on the leaves (verification).
       procedure, pass(self) :: apply_b        !< y = B g: the boundary values onto the boundary rows.
       procedure, pass(self) :: apply_bt       !< s = B^T x: the boundary rows onto the boundary faces.
@@ -397,9 +412,10 @@ contains
       do lv=lbound(self%al, dim=1), ubound(self%al, dim=1)
          call self%al(lv)%plan%destroy(st) ; call self%el(lv)%plan%destroy(st)
          call self%rl(lv)%plan%destroy(st) ; call self%pl(lv)%plan%destroy(st)
+         call self%etl(lv)%plan%destroy(st)
       enddo
    endif
-   if (allocated(self%al))           deallocate(self%al, self%el, self%rl, self%pl, self%diag, self%colour)
+   if (allocated(self%al))           deallocate(self%al, self%el, self%etl, self%rl, self%pl, self%diag, self%colour)
    if (allocated(self%vol))          deallocate(self%vol)
    if (allocated(self%g_dst))        deallocate(self%g_dst)
    if (allocated(self%u))            deallocate(self%u)
@@ -418,12 +434,13 @@ contains
    self%root_max = 0_I4P
    self%has_guess = .false.
    self%level_operator = ELISHA_OPERATOR_CSR
+   self%vcycle_form = ELISHA_VCYCLE_SYMMETRIC
    self%comm = elisha_comm_object() ! a copy: the caller frees its communicator
    self%is_initialized = .false.
    endsubroutine destroy
 
    subroutine setup(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells, &
-                    level_operator)
+                    level_operator, vcycle)
    !< Check the mesh and the arguments; take the leaves, derive the hierarchy, assemble the operator, the ghost fill and
    !< the preconditioner, set up the root solver: of the dynamic type of `coarse` when given (a device backend passes
    !< its spectral solver), the host (FFTW) one otherwise. With `isolated` (issue #87), also the ghost-to-ghost Green's
@@ -435,6 +452,8 @@ contains
    !< the root's transform growth; tests force the levels with a small one, the bench measures others).
    !< `level_operator` (M7, audit C2): `ELISHA_OPERATOR_CSR` (this host solver's default) or `ELISHA_OPERATOR_STENCIL` (the
    !< block-interior rows of the level operators as a stencil; the OpenACC backend's default), else `ELISHA_ERR_ARGUMENT`.
+   !< `vcycle` (ELISHA notes E1c): `ELISHA_VCYCLE_SYMMETRIC` (the default) or `ELISHA_VCYCLE_ADAM` (ADAM's V-cycle, not
+   !< symmetric on AMR, for the bitwise parity with ADAM), else `ELISHA_ERR_ARGUMENT`.
    class(elisha_hierarchical_solver_object), intent(inout)        :: self      !< The solver.
    type(elisha_mesh_object),       intent(inout)                  :: mesh      !< The mesh (validated here if not yet).
    type(elisha_comm_object),       intent(in)                     :: comm      !< Communication context (initialised).
@@ -449,6 +468,8 @@ contains
                                                                                 !< the backend's).
    integer(I4P),                   intent(in),           optional :: level_operator !< ELISHA_OPERATOR_CSR (default)
                                                                                     !< or ELISHA_OPERATOR_STENCIL.
+   integer(I4P),                   intent(in),           optional :: vcycle !< ELISHA_VCYCLE_SYMMETRIC (default) or
+                                                                            !< ELISHA_VCYCLE_ADAM.
    type(elisha_spectral_solver_object) :: host_fft   !< The host spectral solver (its root_cells_max, without coarse).
    integer(I4P), allocatable :: cnt(:,:)             !< Level blocks per rank and level.
    integer(I4P)              :: d, n, id, l, b, p    !< Counters.
@@ -474,6 +495,14 @@ contains
          return
       endif
       self%level_operator = level_operator
+   endif
+   if (present(vcycle)) then
+      if (all(vcycle /= [ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM])) then
+         call elisha_set_error(stat, errmsg, ELISHA_ERR_ARGUMENT, HERE//': vcycle is not ELISHA_VCYCLE_SYMMETRIC '// &
+                               'or ELISHA_VCYCLE_ADAM')
+         return
+      endif
+      self%vcycle_form = vcycle
    endif
    if (present(isolated)) self%isolated = isolated
    call elisha_check_isolated(self%isolated, present(bc), 0_I4P, mesh%null, mesh%periodic, mesh%dx0, stat, errmsg)
@@ -844,7 +873,7 @@ contains
 
       lt = max(self%lmax, self%lbot+1)
       allocate(self%al(self%lbot+1:lt), self%el(self%lbot+1:lt), self%rl(self%lbot+1:lt), self%pl(self%lbot+1:lt), &
-               self%diag(self%lbot+1:lt), self%colour(self%lbot+1:lt))
+               self%diag(self%lbot+1:lt), self%colour(self%lbot+1:lt), self%etl(self%lbot+1:lt))
       do lv=self%lbot+1, self%lmax
          call level_ops(lv)
          if (stat /= ELISHA_OK) then ! every rank alike (assemble agreed)
@@ -858,12 +887,16 @@ contains
       !< Level lv: A_l (the plain Laplacian on the level's cells, a face to a cell outside the level reading E_l: the
       !< level-(lv-1) cell containing it), R_l (rows: this rank's shadow cells at lv-1, the sum of their children at
       !< lv) and P_l (rows: the level's cells, their parent at lv-1). At lmin and below every cell of the domain is in
-      !< the level (no E_l), and below lmin every block has its cells at lv-1 (E5c: the blocks coarsen inside). Then the
-      !< red-black assertion (audit A3): every off-diagonal entry of A_l links cells of different colour.
+      !< the level (no E_l), and below lmin every block has its cells at lv-1 (E5c: the blocks coarsen inside). E_l^T
+      !< (ELISHA notes E1c; rows: this rank's leaf cells at lv-1), from the coarse side: a leaf cell's face to a
+      !< neighbour at lv-1 that is refined (its block at lv exists) has the fine cells of that face, each with the fine
+      !< face weight, E_l's entries (a fine cell, the outside neighbour's parent, w) transposed. Then the red-black
+      !< assertion (audit A3): every off-diagonal entry of A_l links cells of different colour.
       integer(I4P), intent(in) :: lv !< Level.
-      type(triplets)           :: ta, te, tr, tp !< Assembly buffers.
+      type(triplets)           :: ta, te, tr, tp, tet !< Assembly buffers.
       integer(I4P)             :: q, nloc, i, j, kk, pp, dd, sgn, row, o, id_, ch !< Counters.
       integer(I4P)             :: cc(3), nb3(3), pc(3), cch(3) !< Coordinates.
+      integer(I4P)             :: nbc(3), fc(3), m !< E_l^T: the coarse neighbour, a fine cell on the face, its bit.
       integer(I4P)             :: nl(3), nlc(3) !< Cells per block at lv and lv-1.
       real(R_P)                :: w !< Face weight.
       integer(I8P), allocatable :: hkey(:) !< A_l's halo columns: their cell keys.
@@ -935,13 +968,53 @@ contains
             enddo
          enddo
       enddo
+      if (lv > self%lmin) then ! E_l^T: the faces of the leaves at lv-1 to a refined neighbour
+         do q=1, self%nloc_lev(lv-1)
+            id_ = self%lev_node(q,lv-1)
+            if (.not.self%node_leaf(id_)) cycle
+            do kk=1, nlc(3)
+               do j=1, nlc(2)
+                  do i=1, nlc(1)
+                     pc = self%node_c(1:3,id_) * nlc + [i-1, j-1, kk-1]
+                     row = (q - 1) * self%ncb_of(lv-1) + self%lin_of(lv-1, [i, j, kk])
+                     do pp=1, self%nd
+                        dd = self%act(pp)
+                        w = self%face_weight(lv, dd)
+                        do sgn=-1, 1, 2
+                           nbc = pc ; nbc(dd) = nbc(dd) + sgn
+                           nbc = self%wrap(lv-1, nbc)
+                           if (self%outside(lv-1, nbc)) cycle
+                           fc = nbc
+                           do ch=1, self%nd
+                              fc(self%act(ch)) = 2 * nbc(self%act(ch))
+                           enddo
+                           if (self%node_hash%get(elisha_bkey([fc / nl, lv])) <= 0) cycle ! not refined: no seam
+                           fc(dd) = fc(dd) + merge(1, 0, sgn < 0) ! the neighbour's children facing this cell
+                           do o=0, 2**(self%nd-1)-1 ! the fine cells of the face: the other active axes' bits
+                              cch = fc
+                              m = 0
+                              do ch=1, self%nd
+                                 if (self%act(ch) == dd) cycle
+                                 cch(self%act(ch)) = fc(self%act(ch)) + ibits(o, m, 1)
+                                 m = m + 1
+                              enddo
+                              call trip_add(tet, row, elisha_ckey(lv, cch), w)
+                           enddo
+                        enddo
+                     enddo
+                  enddo
+               enddo
+            enddo
+         enddo
+      endif
       call self%assemble(ta, nloc, lv, self%al(lv), stat, errmsg, halo_keys=hkey) ; if (stat /= ELISHA_OK) return
       call check_colours(lv, hkey) ; if (stat /= ELISHA_OK) return
       if (self%level_operator == ELISHA_OPERATOR_STENCIL) call stencil_of(lv)
       call self%assemble(te, nloc, lv-1, self%el(lv), stat, errmsg) ; if (stat /= ELISHA_OK) return
       call self%assemble(tr, self%nloc_lev(lv-1) * self%ncb_of(lv-1), lv, self%rl(lv), stat, errmsg)
       if (stat /= ELISHA_OK) return
-      call self%assemble(tp, nloc, lv-1, self%pl(lv), stat, errmsg)
+      call self%assemble(tp, nloc, lv-1, self%pl(lv), stat, errmsg) ; if (stat /= ELISHA_OK) return
+      call self%assemble(tet, self%nloc_lev(lv-1) * self%ncb_of(lv-1), lv, self%etl(lv), stat, errmsg)
       endsubroutine level_ops
 
       subroutine stencil_of(lv)
@@ -1282,6 +1355,46 @@ contains
    d(4) = gdot(self%comm, ay, ay, n, stat) ; if (stat /= ELISHA_OK) return
    defect = abs(d(1) - d(2)) / (sqrt(d(3)) * sqrt(d(4)))
    endfunction symmetry_defect
+
+   function vcycle_symmetry_defect(self, x, y, stat) result(defect)
+   !< |x . M y - y . M x| / (|x| |M y|) over the ranks, M the V-cycle (the FCG preconditioner), for two leaf vectors:
+   !< the preconditioner's symmetry, verified (ELISHA notes E1c: about 1e-16 with `ELISHA_VCYCLE_SYMMETRIC`, O(0.1)
+   !< with `ELISHA_VCYCLE_ADAM` on AMR, about 1e-16 on a uniform mesh with either). Through the FCG work vectors (the
+   !< next solve recomputes them). Collective.
+   class(elisha_hierarchical_solver_object), intent(inout) :: self  !< The solver.
+   real(R_P),                      intent(in)    :: x(1:)        !< First vector.
+   real(R_P),                      intent(in)    :: y(1:)        !< Second vector.
+   integer(I4P),                   intent(out)   :: stat         !< Status.
+   real(R_P)                                     :: defect       !< Result.
+   real(R_P), allocatable                        :: mx(:), my(:) !< Products.
+   real(R_P)                                     :: d(4)         !< The four reductions.
+   integer(I4P)                                  :: n            !< Local length.
+
+   defect = 0._R_P
+   if (.not.self%is_initialized) then
+      stat = ELISHA_ERR_NOT_INITIALIZED
+      return
+   endif
+   n = self%a%nrow
+   allocate(mx(max(n,1)), my(max(n,1)))
+   ! M x and M y through the work vectors (inline: nvfortran 26.9 refuses a type-bound call on the host's self from an
+   ! internal procedure)
+   if (n > 0) self%wr(1:n) = x(1:n)
+   call self%vec_update(self%wr, to_device=.true.)
+   call self%vcycle(self%wr, self%wz, stat) ; if (stat /= ELISHA_OK) return
+   call self%vec_update(self%wz, to_device=.false.)
+   if (n > 0) mx(1:n) = self%wz(1:n)
+   if (n > 0) self%wr(1:n) = y(1:n)
+   call self%vec_update(self%wr, to_device=.true.)
+   call self%vcycle(self%wr, self%wz, stat) ; if (stat /= ELISHA_OK) return
+   call self%vec_update(self%wz, to_device=.false.)
+   if (n > 0) my(1:n) = self%wz(1:n)
+   d(1) = gdot(self%comm, x, my, n, stat) ; if (stat /= ELISHA_OK) return
+   d(2) = gdot(self%comm, y, mx, n, stat) ; if (stat /= ELISHA_OK) return
+   d(3) = gdot(self%comm, x, x, n, stat) ; if (stat /= ELISHA_OK) return
+   d(4) = gdot(self%comm, my, my, n, stat) ; if (stat /= ELISHA_OK) return
+   defect = abs(d(1) - d(2)) / (sqrt(d(3)) * sqrt(d(4)))
+   endfunction vcycle_symmetry_defect
 
    subroutine apply_a(self, x, y, stat)
    !< y = A x on this rank's leaf cells (V-weighted), through the work vectors (where the hooks compute). Collective.
@@ -1939,8 +2052,9 @@ contains
    ns = max(size(self%a%sidx), size(self%g%sidx))
    nh = max(self%a%nhalo, self%g%nhalo)
    do lv=self%lbot+1, self%lmax
-      ns = max(ns, size(self%al(lv)%sidx), size(self%el(lv)%sidx), size(self%rl(lv)%sidx), size(self%pl(lv)%sidx))
-      nh = max(nh, self%al(lv)%nhalo, self%el(lv)%nhalo, self%rl(lv)%nhalo, self%pl(lv)%nhalo)
+      ns = max(ns, size(self%al(lv)%sidx), size(self%el(lv)%sidx), size(self%rl(lv)%sidx), size(self%pl(lv)%sidx), &
+               size(self%etl(lv)%sidx))
+      nh = max(nh, self%al(lv)%nhalo, self%el(lv)%nhalo, self%rl(lv)%nhalo, self%pl(lv)%nhalo, self%etl(lv)%nhalo)
    enddo
    allocate(self%xsend(max(ns,1)), self%xhalo(max(nh,1)))
    self%xsend = 0._R_P ; self%xhalo = 0._R_P
@@ -2157,6 +2271,10 @@ contains
       call self%vec_lincomb(self%lr(lv)%v, -1._R_P, self%lt1(lv)%v, self%lt2(lv)%v, n)
       call self%apply(self%rl(lv), self%lt2(lv)%v, self%lt1(lv-1)%v, stat) ; if (stat /= ELISHA_OK) return
       call self%vec_axpy(1._R_P, self%lt1(lv-1)%v, self%lr(lv-1)%v, nc)
+      if (self%vcycle_form == ELISHA_VCYCLE_SYMMETRIC .and. lv > self%lmin) then ! the adjoint of the way up's E_l
+         call self%apply(self%etl(lv), self%le(lv)%v, self%lt1(lv-1)%v, stat) ; if (stat /= ELISHA_OK) return
+         call self%vec_axpy(-1._R_P, self%lt1(lv-1)%v, self%lr(lv-1)%v, nc)
+      endif
    enddo
    ! the root: exact, by the spectral solver on every rank (L e = r / V, the mean removed), through the host
    n = self%nloc_lev(self%lbot)

@@ -181,6 +181,11 @@ were the only multi-node scaling evidence for these solvers. They now run on ELI
 seconds, with no ADAM oracle in the binary. FLAIL's published numbers are quoted next to them
 [below](#against-flail-adam-s-numbers).
 
+The multigrid rows below were measured on 2026-11-20 with ADAM's V-cycle, before the symmetric V-cycle became the
+default ([the hierarchical solver](./hierarchical-solver#the-symmetric-v-cycle)). On the verification's AMR meshes the
+symmetric V-cycle takes 19 to 35% fewer FCG iterations, at one extra sparse product per level and V-cycle over the
+seam rows only; the ladders' meshes have not been re-timed with it.
+
 ### How the ladders are measured
 
 - **Program.** `src/bench/ladder/elisha_bench_ladder_mpi.F90`, in the modes `bench-ladder-gnu` and `bench-ladder-nvf`

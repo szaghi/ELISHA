@@ -27,6 +27,11 @@ module elisha_parameters
 !< host solver's default, ADAM's) applies and smooths every row from its CSR entries; `ELISHA_OPERATOR_STENCIL` applies the rows of
 !< the cells inside a block (the constant-coefficient 7-point stencil) without reading their entries, the others by CSR
 !< (the OpenACC backend's default).
+!<
+!< The hierarchical solver's V-cycle (`setup(..., vcycle)`): `ELISHA_VCYCLE_SYMMETRIC` (the default) couples a level's
+!< cells to the coarser leaves across a 2:1 face both ways, `E_l` on the way up and its adjoint `E_l^T` on the way
+!< down, so the preconditioner is symmetric; `ELISHA_VCYCLE_ADAM` is ADAM's V-cycle, `E_l` on the way up only (not
+!< symmetric on AMR: FCG can stall, ELISHA notes E1c), kept to reproduce ADAM's results bit for bit.
 use penf, only : I4P
 implicit none
 private
@@ -39,6 +44,7 @@ public :: ELISHA_BC_FREE_GHOSTS
 public :: ELISHA_BC_KINDS
 public :: ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
 public :: ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL
+public :: ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM
 
 integer(I4P), parameter :: ELISHA_BC_PERIODIC        = 0_I4P !< Periodic (both faces of the axis).
 integer(I4P), parameter :: ELISHA_BC_DIRICHLET       = 1_I4P !< Value at the face.
@@ -54,4 +60,6 @@ integer(I4P), parameter :: ELISHA_PATH_SPECTRAL     = 1_I4P !< The spectral (FFT
 integer(I4P), parameter :: ELISHA_PATH_HIERARCHICAL = 2_I4P !< The hierarchical (multigrid FCG) solver, any 2:1 mesh.
 integer(I4P), parameter :: ELISHA_OPERATOR_CSR      = 0_I4P !< Level operators from their CSR entries (default).
 integer(I4P), parameter :: ELISHA_OPERATOR_STENCIL  = 1_I4P !< Block-interior rows as a matrix-free 7-point stencil.
+integer(I4P), parameter :: ELISHA_VCYCLE_SYMMETRIC  = 0_I4P !< The seam coupling both ways: a symmetric V-cycle (default).
+integer(I4P), parameter :: ELISHA_VCYCLE_ADAM       = 1_I4P !< ADAM's V-cycle: the seam coupling on the way up only.
 endmodule elisha_parameters

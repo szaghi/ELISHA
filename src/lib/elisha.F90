@@ -50,6 +50,8 @@ public :: ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_BC_KINDS
 public :: ELISHA_PATH_AUTO, ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL
 ! level operators of the hierarchical solver (elisha_parameters)
 public :: ELISHA_OPERATOR_CSR, ELISHA_OPERATOR_STENCIL
+! V-cycles of the hierarchical solver (elisha_parameters)
+public :: ELISHA_VCYCLE_SYMMETRIC, ELISHA_VCYCLE_ADAM
 ! the setup checks (elisha_setup_checks)
 public :: elisha_check_bc, elisha_check_dg_order, elisha_check_ghost_count, elisha_check_isolated
 public :: elisha_check_isolated_mesh, elisha_check_path, elisha_check_periodicity, elisha_check_reach

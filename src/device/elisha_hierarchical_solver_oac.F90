@@ -40,7 +40,9 @@ module elisha_hierarchical_solver_oac
 !<   (medooza job 1369037); `level_operator=ELISHA_OPERATOR_CSR` selects ADAM's loops;
 !< - one M7 change (audit C3): the colour is the host's integer (`ivec`, 0 or 1), placed by `place_i` and compared as
 !<   such in `sweep_dev`; ADAM's was a real compared through `nint`. It selects rows only, so no result changes, and
-!<   the kernel reads 4 bytes per row for it instead of 8.
+!<   the kernel reads 4 bytes per row for it instead of 8;
+!< - the host's symmetric V-cycle (ELISHA notes E1c, the default, `vcycle=ELISHA_VCYCLE_ADAM` for ADAM FNL's): its
+!<   extra operator `etl` (E_l^T) goes to the device with the others and is applied by `apply_oac` (CSR).
 !< The `R8P` of ADAM is ELISHA's `R_P` (R8P).
 !<
 !< ADAM's description, unchanged: the leaves, the hierarchy and every operator are assembled on the host; `work_place`
@@ -95,7 +97,7 @@ endtype elisha_hierarchical_solver_oac_object
 contains
    ! public methods
    subroutine setup_oac(self, mesh, comm, stat, errmsg, tolerance, max_iterations, coarse, isolated, bc, root_cells, &
-                        level_operator)
+                        level_operator, vcycle)
    !< As `elisha_hierarchical_solver_object%setup`; without `coarse`, the coarsest level (and the James step's Green's
    !< function) on cuFFT; without `level_operator`, the stencil (`ELISHA_OPERATOR_STENCIL`, the host's default is CSR).
    !< Then the operators and the work vectors go to the device.
@@ -112,6 +114,7 @@ contains
    integer(I4P),                   intent(in),           optional     :: root_cells !< Most cells of the root.
    integer(I4P),                   intent(in),           optional     :: level_operator !< The level operators' form
                                                                                          !< (default: the stencil).
+   integer(I4P),                   intent(in),           optional     :: vcycle    !< The V-cycle (default: symmetric).
    type(elisha_spectral_solver_cufft_object)                          :: cufft_mold !< The cuFFT root, by default.
    integer(I4P)                                                       :: code      !< Status of the placement.
    integer(I4P)                                                       :: lop       !< The level operators' form.
@@ -125,12 +128,12 @@ contains
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=coarse, isolated=isolated, bc=bc, root_cells=root_cells, &
-                                                        level_operator=lop)
+                                                        level_operator=lop, vcycle=vcycle)
    else
       call self%elisha_hierarchical_solver_object%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg,           &
                                                         tolerance=tolerance, max_iterations=max_iterations,      &
                                                         coarse=cufft_mold, isolated=isolated, bc=bc,             &
-                                                        root_cells=root_cells, level_operator=lop)
+                                                        root_cells=root_cells, level_operator=lop, vcycle=vcycle)
    endif
    if (stat /= ELISHA_OK) return
    call self%work_place(attach=.true., stat=code)
@@ -305,8 +308,9 @@ contains
    if (attach) then
       ns = max(size(self%a%sidx), size(self%g%sidx)) ; nh = max(self%a%nhalo, self%g%nhalo)
       do lv=self%lbot+1, self%lmax
-         ns = max(ns, size(self%al(lv)%sidx), size(self%el(lv)%sidx), size(self%rl(lv)%sidx), size(self%pl(lv)%sidx))
-         nh = max(nh, self%al(lv)%nhalo, self%el(lv)%nhalo, self%rl(lv)%nhalo, self%pl(lv)%nhalo)
+         ns = max(ns, size(self%al(lv)%sidx), size(self%el(lv)%sidx), size(self%rl(lv)%sidx), size(self%pl(lv)%sidx), &
+                  size(self%etl(lv)%sidx))
+         nh = max(nh, self%al(lv)%nhalo, self%el(lv)%nhalo, self%rl(lv)%nhalo, self%pl(lv)%nhalo, self%etl(lv)%nhalo)
       enddo
       allocate(self%dsb(max(ns,1)), self%dhb(max(nh,1)))
       self%dsb = 0._R_P ; self%dhb = 0._R_P
@@ -316,6 +320,7 @@ contains
    do lv=self%lbot+1, self%lmax
       call place_csr(self%al(lv), attach) ; call place_csr(self%el(lv), attach)
       call place_csr(self%rl(lv), attach) ; call place_csr(self%pl(lv), attach)
+      call place_csr(self%etl(lv), attach)
       call place_r(self%diag(lv)%v, attach) ; call place_i(self%colour(lv)%v, attach)
    enddo
    do lv=self%lbot, self%lmax

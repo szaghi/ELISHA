@@ -190,7 +190,7 @@ contains
    endsubroutine reset_wall
 
    subroutine setup(self, mesh, comm, stat, errmsg, path, isolated, bc, dg_order, tolerance, max_iterations, root_cells, &
-                    spectral_mold, hierarchical_mold, level_operator)
+                    spectral_mold, hierarchical_mold, level_operator, vcycle)
    !< Choose and set up the solver for the current mesh: call it on the initial mesh and after every regrid (it rebuilds
    !< the solver). Collective over `comm`, which the solver keeps (a copy: the caller frees the communicator after
    !< `destroy`). The mesh is validated here (collectively) unless the caller did it.
@@ -204,8 +204,9 @@ contains
    !< solver's type (and the hierarchical root's); `hierarchical_mold`: the hierarchical solver's; without them, the host
    !< solvers. `level_operator` (M7, audit C2): the hierarchical solver's level operators, `ELISHA_OPERATOR_CSR` or
    !< `ELISHA_OPERATOR_STENCIL`; without it, each backend's default (CSR on the host, the stencil on OpenACC; ignored on
-   !< the spectral path). On failure the facade is left
-   !< not set up (`path()` 0).
+   !< the spectral path). `vcycle` (ELISHA notes E1c): the hierarchical solver's V-cycle, `ELISHA_VCYCLE_SYMMETRIC`
+   !< (default) or `ELISHA_VCYCLE_ADAM` (ADAM's, for the bitwise parity with ADAM; ignored on the spectral path). On
+   !< failure the facade is left not set up (`path()` 0).
    class(elisha_solver_object),                     intent(inout)         :: self      !< The solver.
    type(elisha_mesh_object),                        intent(inout)         :: mesh      !< The mesh (validated here if
                                                                                        !< not yet).
@@ -228,6 +229,7 @@ contains
                                                                                                !< backend.
    integer(I4P),                                    intent(in),  optional :: level_operator !< Hierarchical: the
                                                                                             !< level operators' form.
+   integer(I4P),                                    intent(in),  optional :: vcycle !< Hierarchical: the V-cycle.
    integer(I4P)                                                           :: path_     !< The path asked.
    integer(I4P)                                                           :: dg_order_ !< The operator's order.
    integer(I4P)                                                           :: bc_(2,3)  !< The kinds (periodic if none).
@@ -294,7 +296,7 @@ contains
       endif
       call self%hierarchical%setup(mesh=mesh, comm=comm, stat=stat, errmsg=errmsg, tolerance=tolerance,         &
                                    max_iterations=max_iterations, coarse=spectral_mold, isolated=isolated, bc=bc, &
-                                   root_cells=root_cells, level_operator=level_operator)
+                                   root_cells=root_cells, level_operator=level_operator, vcycle=vcycle)
       if (stat /= ELISHA_OK) then
          call self%destroy
          return

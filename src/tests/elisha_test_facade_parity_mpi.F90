@@ -33,7 +33,7 @@ use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, iee
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_PERIODIC, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN,                &
                    ELISHA_BC_DIRICHLET_GHOST, ELISHA_BC_ZERO_GHOSTS, ELISHA_BC_FREE_GHOSTS, ELISHA_PATH_AUTO,     &
                    ELISHA_PATH_SPECTRAL, ELISHA_PATH_HIERARCHICAL, elisha_comm_object, elisha_mesh_object,       &
-                   elisha_solver_object, elisha_diagnostics_object
+                   elisha_solver_object, elisha_diagnostics_object, ELISHA_VCYCLE_ADAM
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
 use adam_mpih_global, only : mpih
@@ -242,7 +242,8 @@ contains
    enddo
    ! the setups: the same backend, boundaries, operator and root cap
    call a%setup(grid=grid, field=field, isolated=iso, backend=path, bc=bc, dg_order=dg_order, root_cells=root_cells)
-   call e%setup(mesh, c, stat, msg, path=path, isolated=isolated, bc=bc, dg_order=dg_order, root_cells=root_cells)
+   call e%setup(mesh, c, stat, msg, path=path, isolated=isolated, bc=bc, dg_order=dg_order, root_cells=root_cells, &
+                vcycle=ELISHA_VCYCLE_ADAM)
    if (stat /= ELISHA_OK) then
       call fail(label//': setup: '//msg)
       return

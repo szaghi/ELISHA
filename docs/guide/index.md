@@ -16,7 +16,8 @@ that fell from him (2:13): two solvers behind one facade, and the work of the ma
 
 ## Status
 
-The port of ADAM's FLAIL is complete. Tests hold the math, the solvers and the facade bitwise to ADAM's own code, and
+The port of ADAM's FLAIL is complete. Tests hold the math, the solvers and the facade bitwise to ADAM's own code (the
+multigrid with `vcycle=ELISHA_VCYCLE_ADAM`: its default V-cycle is symmetric, a fix that changes its AMR results), and
 reproduce every ADAM refusal as a status code:
 
 - the [L0 math](./l0-math): eigenvalues, extensions, the D(G) stencils, the lattice Green's function;

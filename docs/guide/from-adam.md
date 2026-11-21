@@ -2,8 +2,11 @@
 
 ELISHA is ADAM's FLAIL (ADAM 669d0bdd) extracted: the facade `adam_flail_object`, the FFT solver
 `adam_poisson_fft_object`, the multigrid `adam_poisson_mg_object` and their FNL device twins. The arithmetic is
-unchanged, and the tests hold every solver and the facade bitwise to ADAM's own code, compiled unchanged in
-`src/tests`. What changed is the interface: a mesh descriptor instead of ADAM's grid and field, the caller's
+unchanged but for one fix, the multigrid's symmetric V-cycle, which changes the results on AMR meshes (fewer
+iterations, and no stall: [the symmetric V-cycle](./hierarchical-solver#the-symmetric-v-cycle)). With
+`vcycle=ELISHA_VCYCLE_ADAM` the tests hold every solver and the facade bitwise to ADAM's own code, compiled unchanged
+in `src/tests`. A client that checks its results against ADAM's can wire ELISHA with that option first, then drop
+it. What changed is the interface: a mesh descriptor instead of ADAM's grid and field, the caller's
 communicator, a status instead of a stop, and private solvers behind the facade. This page maps a FLAIL client onto
 ELISHA.
 

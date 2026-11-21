@@ -12,24 +12,29 @@ program elisha_test_hierarchical_solver_mpi
 !< - (d) the 2x2x2 AMR mesh non-periodic, ghost-Dirichlet faces (the default), homogeneous;
 !< - (e) uniform 2x2x2 isolated (the James step).
 !< Checked on every case: the FCG residual at most its stop tolerance (`tolerance_used`), at least one iteration, the
-!< operator's `symmetry_defect` of two fixed vectors at most 1e-12; on (a)-(d) the residual recomputed through
+!< operator's `symmetry_defect` of two fixed vectors at most 1e-12, the V-cycle's (`vcycle_symmetry_defect`, the
+!< default `ELISHA_VCYCLE_SYMMETRIC`) at most 1e-12; on the AMR cases (b), (d) ADAM's V-cycle (`ELISHA_VCYCLE_ADAM`)
+!< set up on the same mesh, its defect at least 1e-6 (ELISHA notes E1c: the seam coupling on the way up only), its
+!< FCG iterations printed beside the default's; on (a)-(d) the residual recomputed through
 !< `apply_a`, `max |(A phi) / V - factor (f - mean f)| / max |factor (f - mean f)|` (the mean volume-weighted; no mean
 !< with a Dirichlet face), at most twice the stop tolerance; on (c) one iteration. Refusals, each with the same status
 !< on every rank: a mesh not 2:1 balanced (`ELISHA_ERR_MESH_BALANCE`), isolated with boundary kinds
 !< (`ELISHA_ERR_ISOLATED_BC`), a solve before the setup (`ELISHA_ERR_NOT_INITIALIZED`), a `phi` of the wrong shape
-!< (`ELISHA_ERR_SHAPE`), fewer ghost values than boundary faces (`ELISHA_ERR_GHOST_COUNT`). The FP traps of a debug
+!< (`ELISHA_ERR_SHAPE`), fewer ghost values than boundary faces (`ELISHA_ERR_GHOST_COUNT`), a `vcycle` that is no
+!< `ELISHA_VCYCLE_*` (`ELISHA_ERR_ARGUMENT`). The FP traps of a debug
 !< build are off around `MPI_Init` only (hwloc raises IEEE flags inside it).
 #ifndef ELISHA_NO_MPI
 use mpi
 #endif
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_ERR_MESH_BALANCE, ELISHA_ERR_ISOLATED_BC, ELISHA_ERR_NOT_INITIALIZED, &
-                   ELISHA_ERR_SHAPE, ELISHA_ERR_GHOST_COUNT, ELISHA_BC_DIRICHLET_GHOST, elisha_comm_object,          &
-                   elisha_mesh_object, elisha_hierarchical_solver_object
+                   ELISHA_ERR_SHAPE, ELISHA_ERR_GHOST_COUNT, ELISHA_ERR_ARGUMENT, ELISHA_BC_DIRICHLET_GHOST,          &
+                   ELISHA_VCYCLE_ADAM, elisha_comm_object, elisha_mesh_object, elisha_hierarchical_solver_object
 implicit none
 real(R_P),    parameter  :: TOL_MG=1.e-11_R_P       !< FCG tolerance requested.
 integer(I4P), parameter  :: MAX_IT=100_I4P          !< FCG iterations allowed.
-real(R_P),    parameter  :: TOL_SYMMETRY=1.e-12_R_P !< Bound on the operator's symmetry defect.
+real(R_P),    parameter  :: TOL_SYMMETRY=1.e-12_R_P !< Bound on the operator's and the V-cycle's symmetry defect.
+real(R_P),    parameter  :: MIN_ADAM_DEFECT=1.e-6_R_P !< ADAM's V-cycle on AMR: its symmetry defect at least this.
 real(R_P),    parameter  :: FACTOR=2.5_R_P          !< Source factor.
 real(R_P),    parameter  :: PI=acos(-1._R_P)        !< Pi.
 real(R_P),    parameter  :: C0=0.7_R_P              !< The constant of the source.
@@ -148,7 +153,9 @@ contains
    type(elisha_hierarchical_solver_object) :: solver !< Solver.
    real(R_P), allocatable :: buf(:), phi(:,:,:,:), au(:), x(:), y(:) !< Source, potential, A u, symmetry vectors.
    real(R_P)              :: dx(3), xc(3), vol, s(2), mean, res(2), sym, length(3) !< Measures.
-   integer(I4P)           :: b, i, j, k, n, iterations, nleaf(1) !< Counters.
+   real(R_P)              :: vsym, vsym_adam  !< The V-cycle's symmetry defect, default and ADAM's.
+   integer(I4P)           :: b, i, j, k, n, iterations, nleaf(1), it_adam !< Counters.
+   character(:), allocatable :: adam_note     !< ADAM's V-cycle on AMR (printed).
 
    call make_mesh(mesh, nblk0, dx0, amr, refine, periodic, .false., stat, msg)
    if (stat /= ELISHA_OK) then
@@ -228,19 +235,68 @@ contains
       x(i) = sin(1.3_R_P * i + 0.7_R_P * wrank) ; y(i) = cos(2.1_R_P * i - 0.4_R_P * wrank)
    enddo
    sym = solver%symmetry_defect(x, y, stat) ; if (stat /= ELISHA_OK) call fail(label//': symmetry_defect')
+   vsym = solver%vcycle_symmetry_defect(x, y, stat) ; if (stat /= ELISHA_OK) call fail(label//': vcycle_symmetry_defect')
+   adam_note = ''
+   vsym_adam = huge(1._R_P)
+   if (amr) call adam_vcycle(label, mesh, root_cells, isolated, buf, phi, x, y, it_adam, vsym_adam, adam_note)
    nleaf = mesh%nleaf
-   if (wrank == 0) print '(A,I0,A,I0,A,I0,A,I0,A,I0,A,I0,A,ES9.2,A,ES9.2,A,ES9.2,A,ES9.2)', &
+   if (wrank == 0) print '(A,I0,A,I0,A,I0,A,I0,A,I0,A,I0,A,ES9.2,A,ES9.2,A,ES9.2,A,ES9.2,A,ES9.2,A)', &
       'elisha_test_hierarchical_solver_mpi: '//label//' np ', wsize, ' leaves ', nleaf(1), ' levels ', solver%lbot, &
       '..', solver%lmax, ' iterations ', solver%iterations0, '+', iterations, ' residual ', solver%residual, ' tol ', &
-      solver%tolerance_used, ' recomputed ', res(1) / max(res(2), tiny(1._R_P)), ' symmetry ', sym
+      solver%tolerance_used, ' recomputed ', res(1) / max(res(2), tiny(1._R_P)), ' symmetry ', sym, &
+      ' V-cycle symmetry ', vsym, adam_note
    if (.not.(solver%residual <= solver%tolerance_used)) call fail(label//': FCG residual above its stop tolerance')
    if (.not.(iterations > 0)) call fail(label//': no FCG iteration')
    if (.not.(res(1) <= 2._R_P * solver%tolerance_used * res(2))) call fail(label//': recomputed residual above 2 tol')
    if (.not.(sym <= TOL_SYMMETRY)) call fail(label//': symmetry defect above 1e-12')
+   if (.not.(vsym <= TOL_SYMMETRY)) call fail(label//': V-cycle symmetry defect above 1e-12')
+   if (amr .and. .not.(vsym_adam >= MIN_ADAM_DEFECT)) call fail(label//': ADAM''s V-cycle symmetric on AMR (below 1e-6)')
    if (label(1:3) == '(c)' .and. iterations /= 1) call fail(label//': the exact V-cycle took more than one iteration')
    call solver%destroy
    call mesh%destroy
    endsubroutine run_case
+
+   subroutine adam_vcycle(label, mesh, root_cells, isolated, buf, phi, x, y, it, defect, note)
+   !< ADAM's V-cycle (`ELISHA_VCYCLE_ADAM`) on a case's mesh: the same solve, its iterations and its V-cycle's symmetry
+   !< defect for the same pair of vectors.
+   character(*),             intent(in)    :: label      !< Case label.
+   type(elisha_mesh_object), intent(inout) :: mesh       !< The case's mesh.
+   integer(I4P),             intent(in)    :: root_cells !< Most cells of the root (0: the default).
+   logical,                  intent(in)    :: isolated   !< Isolated boundaries.
+   real(R_P),                intent(in)    :: buf(:)     !< Source.
+   real(R_P),                intent(in)    :: phi(:,:,:,:) !< The case's potential (its shape).
+   real(R_P),                intent(in)    :: x(:), y(:) !< The symmetry vectors.
+   integer(I4P),             intent(out)   :: it         !< FCG iterations.
+   real(R_P),                intent(out)   :: defect     !< The V-cycle's symmetry defect.
+   character(:), allocatable, intent(out)  :: note       !< Printed.
+   type(elisha_hierarchical_solver_object) :: adam       !< ADAM's V-cycle.
+   real(R_P), allocatable :: phi_a(:,:,:,:)              !< Its potential.
+
+   it = -1 ; defect = huge(1._R_P) ; note = ''
+   if (root_cells > 0) then
+      call adam%setup(mesh, c, stat, msg, tolerance=TOL_MG, max_iterations=MAX_IT, root_cells=root_cells, &
+                      isolated=isolated, vcycle=ELISHA_VCYCLE_ADAM)
+   else
+      call adam%setup(mesh, c, stat, msg, tolerance=TOL_MG, max_iterations=MAX_IT, isolated=isolated, &
+                      vcycle=ELISHA_VCYCLE_ADAM)
+   endif
+   if (stat /= ELISHA_OK) then
+      call fail(label//': ADAM V-cycle setup: '//msg)
+      return
+   endif
+   allocate(phi_a(1-NGHOST:NIJK(1)+NGHOST,1-NGHOST:NIJK(2)+NGHOST,1-NGHOST:NIJK(3)+NGHOST,1:size(phi, dim=4)))
+   phi_a = 0._R_P
+   call adam%solve_packed(mesh, buf, FACTOR, phi_a, stat, msg)
+   if (stat /= ELISHA_OK) then
+      call fail(label//': ADAM V-cycle solve: '//msg)
+      return
+   endif
+   it = adam%iterations
+   defect = adam%vcycle_symmetry_defect(x, y, stat)
+   if (stat /= ELISHA_OK) call fail(label//': ADAM V-cycle vcycle_symmetry_defect')
+   note = ', ADAM''s V-cycle: iterations '//itoa(it)//', V-cycle symmetry '//trim(adjustl(fmt(defect)))
+   call adam%destroy
+   endsubroutine adam_vcycle
 
    subroutine check_refusals
    !< The refusals, each with the same status on every rank.
@@ -262,6 +318,9 @@ contains
    bc = ELISHA_BC_DIRICHLET_GHOST
    call solver%setup(mesh, c, stat, msg, isolated=.true., bc=bc)
    call expect(stat, ELISHA_ERR_ISOLATED_BC, 'isolated with bc')
+   ! a vcycle that is no ELISHA_VCYCLE_*
+   call solver%setup(mesh, c, stat, msg, vcycle=7_I4P)
+   call expect(stat, ELISHA_ERR_ARGUMENT, 'a vcycle that is no ELISHA_VCYCLE_*')
    ! a solve before the setup (the failed setups left the solver destroyed)
    allocate(buf(max(mesh%nb*product(NIJK),1)), ghost(1))
    allocate(phi(1-NGHOST:NIJK(1)+NGHOST,1-NGHOST:NIJK(2)+NGHOST,1-NGHOST:NIJK(3)+NGHOST,1:max(mesh%nb,1)))
@@ -323,6 +382,16 @@ contains
    write(w, '(I0)') i
    s = trim(w)
    endfunction itoa
+
+   pure function fmt(x) result(s)
+   !< A real as text (ES9.2).
+   real(R_P), intent(in)     :: x !< Real.
+   character(:), allocatable :: s !< Text.
+   character(16)             :: w !< Buffer.
+
+   write(w, '(ES9.2)') x
+   s = trim(w)
+   endfunction fmt
 
    subroutine fail(what)
    !< Report a failed check.

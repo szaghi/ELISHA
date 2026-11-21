@@ -10,7 +10,7 @@ the path is an argument, a backend is a mold, and what clients read from the sol
 
 | Procedure | Role |
 |-----------|------|
-| `setup(mesh, comm, stat, errmsg[, path][, isolated][, bc][, dg_order][, tolerance][, max_iterations][, root_cells][, spectral_mold][, hierarchical_mold][, level_operator])` | Choose the path for the mesh and set up its solver; called on the initial mesh and after every regrid |
+| `setup(mesh, comm, stat, errmsg[, path][, isolated][, bc][, dg_order][, tolerance][, max_iterations][, root_cells][, spectral_mold][, hierarchical_mold][, level_operator][, vcycle])` | Choose the path for the mesh and set up its solver; called on the initial mesh and after every regrid |
 | `solve_packed(mesh, buf, factor, phi, stat, errmsg[, energy][, ghost][, on_device])` | Solve for `phi` from the packed interior source; every ghost layer of `phi` is filled |
 | `diagnostics()` | An `elisha_diagnostics_object`: the path, iterations, residual, tolerance, CG flag, wall times |
 | `path()`, `is_hierarchical()` | The path in use (`ELISHA_PATH_SPECTRAL`, `ELISHA_PATH_HIERARCHICAL`; 0 before setup) |
@@ -38,6 +38,7 @@ caller already did, so it knows the leaf levels over every rank, then chooses th
 | `max_iterations` | FCG iterations at most (default 200) | hierarchical |
 | `root_cells` | The root of the V-cycle at most this many cells (default: the root solver's) | hierarchical |
 | `level_operator` | `ELISHA_OPERATOR_CSR` (the host's default) or `ELISHA_OPERATOR_STENCIL` (the OpenACC backend's default): the V-cycle's level operators from their CSR entries, or their block-interior rows as a matrix-free stencil ([the hierarchical solver](./hierarchical-solver#stencil-level-operators)); `ELISHA_ERR_ARGUMENT` otherwise | hierarchical |
+| `vcycle` | `ELISHA_VCYCLE_SYMMETRIC` (default) or `ELISHA_VCYCLE_ADAM` (ADAM's V-cycle, not symmetric on AMR, for the bitwise parity with ADAM): [the symmetric V-cycle](./hierarchical-solver#the-symmetric-v-cycle); `ELISHA_ERR_ARGUMENT` otherwise | hierarchical |
 | `spectral_mold` | The spectral solver's type, and on the hierarchical path the type of its root (default: the host FFTW solver) | both |
 | `hierarchical_mold` | The hierarchical solver's type (default: the host one) | hierarchical |
 
@@ -142,8 +143,8 @@ call solver%setup(mesh, comm, stat, errmsg)   ! 2:1 AMR: hierarchical
   on 9 cases: auto on uniform and AMR meshes, both paths forced, isolated on both, the CG of the wide D(G), boundary
   values, and the molds. It checks `phi` with every ghost layer and the energy bitwise, the diagnostics against the
   solver's fields, and each refusal above, on 1 to 3 ranks and in the serial build.
-- `elisha_test_facade_parity_mpi` runs ELISHA's facade against ADAM's (`adam_flail_object`, compiled unchanged in the
-  tests) on 20 steps of one setup and two solves each. The steps cover auto, fft and multigrid on uniform and AMR
+- `elisha_test_facade_parity_mpi` runs ELISHA's facade, with `vcycle=ELISHA_VCYCLE_ADAM`, against ADAM's
+  (`adam_flail_object`, compiled unchanged in the tests) on 20 steps of one setup and two solves each. The steps cover auto, fft and multigrid on uniform and AMR
   meshes, isolated on both paths, Dirichlet, Neumann and ghost-Dirichlet faces with boundary values, D(G) periodic,
   with zero ghosts and with free ghosts, and a regrid sequence from spectral to hierarchical and back. It compares the
   bit patterns of `phi` with every ghost layer, the energy, the iteration counts, the residuals and the boundary-face

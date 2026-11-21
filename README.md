@@ -22,7 +22,8 @@ call solver%solve_packed(mesh, f, factor, phi, stat, errmsg) ! L_h phi = factor 
 
 Status: the whole of FLAIL is ported: both solvers, their device backends and the facade. Tests hold each one bitwise
 to ADAM's code: the host solvers and the facade on 1 to 3 ranks with gfortran, nvfortran and ifx, the device backends
-on an A30. The performance milestone (M7) is done: the device V-cycle root, neighbour halos, resident cuFFT
+on an A30. The multigrid's default V-cycle is symmetric, a fix of ADAM's that changes its AMR results (fewer
+iterations, no stall); `vcycle=ELISHA_VCYCLE_ADAM` keeps ADAM's, and the parity tests use it. The performance milestone (M7) is done: the device V-cycle root, neighbour halos, resident cuFFT
 constants, integer colours, and stencil level operators (the OpenACC default), each measured. Next is M8, wiring ELISHA into ADAM (the owner's
 call).
 

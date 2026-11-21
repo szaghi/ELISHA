@@ -31,6 +31,7 @@ use mpi
 use, intrinsic :: iso_fortran_env, only : int64
 use, intrinsic :: ieee_exceptions, only : ieee_usual, ieee_get_halting_mode, ieee_set_halting_mode
 use elisha, only : I4P, R_P, ELISHA_OK, ELISHA_BC_DIRICHLET, ELISHA_BC_NEUMANN, ELISHA_BC_DIRICHLET_GHOST, &
+                   ELISHA_VCYCLE_ADAM, &
                    elisha_comm_object, elisha_mesh_object, elisha_hierarchical_solver_object
 use adam_grid_object, only : grid_object
 use adam_field_object, only : field_object
@@ -213,20 +214,22 @@ contains
    if (present(bc)) then
       if (root_cells > 0) then
          call adam%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, bc=bc, root_cells=root_cells)
-         call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, root_cells=root_cells)
+         call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, root_cells=root_cells, &
+                        vcycle=ELISHA_VCYCLE_ADAM)
       else
          call adam%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
-         call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc)
+         call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, bc=bc, vcycle=ELISHA_VCYCLE_ADAM)
       endif
    else
       if (root_cells > 0) then
          call adam%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
                               root_cells=root_cells)
          call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
-                        root_cells=root_cells)
+                        root_cells=root_cells, vcycle=ELISHA_VCYCLE_ADAM)
       else
          call adam%initialize(grid=grid, field=field, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated)
-         call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated)
+         call eli%setup(mesh, c, stat, msg, tolerance=TOL, max_iterations=MAX_IT, isolated=isolated, &
+                        vcycle=ELISHA_VCYCLE_ADAM)
       endif
    endif
    if (stat /= ELISHA_OK) then
