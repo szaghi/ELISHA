@@ -4,6 +4,65 @@ All notable changes to this project are documented here.
 Versions follow [Semantic Versioning](https://semver.org/).
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.2] — 2026-11-21
+### Added
+- **status**: ELISHA_ERR_NOT_CONVERGED, an iterative solve stopped above its tolerance
+
+
+### Changed
+- **hierarchical**: An overridable FCG solve, its device twin, and the `assembly` option
+
+- **lib**: No argument temporaries in the library; ifx's arg_temp check on ELISHA's code
+
+
+### Documentation
+- **guide**: The scaling ladders, against FLAIL's table
+
+- **prototypes**: FLAIL's design prototypes, each guide number linked to its producer
+
+- **verification**: The solvers' verification pages, with ADAM's figures regenerated
+
+- **verification**: CPU = device with the symmetric V-cycle (medooza job 1369211)
+
+- **examples**: The AMR example's output with the symmetric V-cycle
+
+- **performance**: The strong ladder re-timed with the symmetric V-cycle (medooza job 1369212)
+
+- **performance**: The device ladder with the device assembly (medooza job 1369224)
+
+- **install**: Known compiler issue, nvfortran's polymorphic-array deallocation (#2)
+
+- **style**: New identity, Futatsu-bi mark in the Koyo ink
+
+- Refactor on SETH's plan: tutorial, cookbook, reference, figures
+
+- **landing**: The casts and figures under the hero, site and README
+
+
+### Fixed
+- **verification**: No stack temporaries in the verification tests' bit comparisons
+
+- **verification**: No polymorphic solver arrays in the sub leg (nvfortran 26.9)
+
+- **verification**: Interior_diff as a subroutine (nvfortran -Mbounds)
+
+- **lib**: No argument temporaries in mesh validation and the spectral solver's sub-problems
+
+- **verification**: No argument temporaries in the verification drivers
+
+- **hierarchical**: A symmetric V-cycle, the adjoint of the seam coupling on the way down
+
+- **tests,bench**: ADAM's V-cycle for the remaining bitwise comparisons with ADAM
+
+
+### Performance
+- **bench**: The scaling ladders of ADAM's bench.sh, on ELISHA alone
+
+- **device**: The multigrid's assembly on the device, the OpenACC default
+
+- **device**: The spectral solver's on_device does not stage phi down
+
+
 ## [0.1.1] — 2026-11-20
 ### Fixed
 - **install**: The one-line installer builds the serial library
